@@ -4,7 +4,7 @@ The architecture is in [docs/architecture.md](docs/architecture.md); read it bef
 
 ## Build and test
 
-Go 1.26 or later. No C compiler is needed: the SQLite driver is pure Go.
+Go 1.26.11 or later. No C compiler is needed: the SQLite driver is pure Go.
 
 ```sh
 go build -o kygate ./cmd/kygate

@@ -52,7 +52,7 @@ func TestUserAdminAPI(t *testing.T) {
 		{ID: "e1", Time: now, OrgID: "o", User: p.User, Family: "openai", Endpoint: "chat", Outcome: "ok", Cache: "miss", Mode: "enforce"},
 		{ID: "e2", Time: now, OrgID: "o", User: "u_bbbbbbbbbbbbbbbbbbbb", Family: "openai", Endpoint: "chat", Outcome: "ok", Cache: "miss", Mode: "enforce"},
 	})
-	if code, body := a.do("GET", "/api/v1/requests?range=24h&user="+p.User, ""); code != 200 || !strings.Contains(body, "e1") || strings.Contains(body, "e2") {
+	if code, body := a.do("GET", "/api/v1/requests?range=24h&user="+p.User, ""); code != 200 || !strings.Contains(body, `"id":"e1"`) || strings.Contains(body, `"id":"e2"`) {
 		t.Fatalf("requests by person: %s", body)
 	}
 	if code, body := a.do("POST", "/api/v1/admin/purge/events", `{"user":"ana@example.com"}`); code != 200 || !strings.Contains(body, `"deleted":1`) {

@@ -60,7 +60,7 @@ The console's Overview shows the money the cache avoided. Measured on a laptop: 
 
 ## Quick start
 
-Get it. You need Go 1.26 or later, and no C compiler, Node, or Python.
+Get it. You need Go 1.26.11 or later, and no C compiler, Node, or Python.
 
 ```sh
 go install github.com/Kytherion/KyGate/cmd/kygate@latest   # puts kygate in your Go bin folder
