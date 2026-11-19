@@ -118,9 +118,37 @@ func TestGuardLinkMutualTLSAndRoundRobin(t *testing.T) {
 		t.Logf("no IPv6 loopback here: round robin not observed (%d calls to one Guard)", a.n.Load())
 		return
 	}
-	if a.n.Load() == 0 || b.n.Load() == 0 {
-		t.Fatalf("calls are spread over both addresses: %d and %d", a.n.Load(), b.n.Load())
+	if !resolvesToBoth("localhost") {
+		t.Logf("localhost does not resolve to both 127.0.0.1 and ::1 here: round robin not observed (%d and %d)", a.n.Load(), b.n.Load())
+		return
 	}
+	// Round robin only picks connections that are ready: the second address
+	// joins once its TLS handshake ends, so keep calling until it does.
+	for a.n.Load() == 0 || b.n.Load() == 0 {
+		if ctx.Err() != nil {
+			t.Fatalf("calls are spread over both addresses: %d and %d", a.n.Load(), b.n.Load())
+		}
+		if _, err := c.api.Info(ctx, &guardpb.InfoRequest{}); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// resolvesToBoth reports whether host resolves to the IPv4 and the IPv6
+// loopback addresses.
+func resolvesToBoth(host string) bool {
+	addrs, err := net.LookupHost(host)
+	if err != nil {
+		return false
+	}
+	var v4, v6 bool
+	for _, s := range addrs {
+		ip := net.ParseIP(s)
+		v4 = v4 || ip.Equal(net.IPv4(127, 0, 0, 1))
+		v6 = v6 || ip.Equal(net.IPv6loopback)
+	}
+	return v4 && v6
 }
 
 func TestGuardTLSSettings(t *testing.T) {
