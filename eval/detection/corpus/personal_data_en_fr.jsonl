@@ -1,0 +1,56 @@
+{"lang": "en", "text": "Please send the signed contract to John Smith before Friday.", "spans": [["PERSON", "John Smith"]]}
+{"lang": "en", "text": "I spoke with Maria Gonzalez-Rivera yesterday about the renewal.", "spans": [["PERSON", "Maria Gonzalez-Rivera"]]}
+{"lang": "en", "text": "Dr. Priya Raman will review the scan results on Monday.", "spans": [["PERSON", "Priya Raman"]]}
+{"lang": "en", "text": "can you draft a reply to tom becker, he asked about the invoice", "spans": [["PERSON", "tom becker"]]}
+{"lang": "en", "text": "Our new hire, Kwame Mensah, starts in the Leeds office next week.", "spans": [["PERSON", "Kwame Mensah"]]}
+{"lang": "en", "text": "Ship the parcel to 742 Evergreen Terrace, Springfield, OR 97477.", "spans": [["ADDRESS", "742 Evergreen Terrace, Springfield, OR 97477"]]}
+{"lang": "en", "text": "Her address is 18 Elm Grove, Bristol BS8 2QT, United Kingdom.", "spans": [["ADDRESS", "18 Elm Grove, Bristol BS8 2QT"]]}
+{"lang": "en", "text": "Call me back on +1 415 555 0132 after 5 pm.", "spans": [["PHONE", "+1 415 555 0132"]]}
+{"lang": "en", "text": "The customer's mobile number is 07700 900461.", "spans": [["PHONE", "07700 900461"]]}
+{"lang": "en", "text": "Forward the report to olivia.hart@northwind-example.com please.", "spans": [["EMAIL", "olivia.hart@northwind-example.com"]]}
+{"lang": "en", "text": "Patient Daniel Osei, born on 14 July 1979, reported chest pain.", "spans": [["PERSON", "Daniel Osei"], ["DATE_OF_BIRTH", "14 July 1979"]]}
+{"lang": "en", "text": "Date of birth: 1985-03-22. Name: Laura Fischer.", "spans": [["DATE_OF_BIRTH", "1985-03-22"], ["PERSON", "Laura Fischer"]]}
+{"lang": "en", "text": "Wire the deposit to IBAN GB33 BUKB 2020 1555 5555 55 before the deadline.", "spans": [["BANK_ACCOUNT", "GB33 BUKB 2020 1555 5555 55"]]}
+{"lang": "en", "text": "Ethan Brooks from Halcyon Robotics Ltd will join the call.", "spans": [["PERSON", "Ethan Brooks"], ["ORGANIZATION", "Halcyon Robotics Ltd"]]}
+{"lang": "en", "text": "Summarize this email from Sarah Lindqvist: the shipment to 55 Harbour Road, Cork is delayed.", "spans": [["PERSON", "Sarah Lindqvist"], ["ADDRESS", "55 Harbour Road, Cork"]]}
+{"lang": "en", "text": "Remind Ahmed Karimi that his appointment moved to 3 pm.", "spans": [["PERSON", "Ahmed Karimi"]]}
+{"lang": "en", "text": "Contact: Grace Liu, phone (212) 555-0198, email grace.liu@example.org", "spans": [["PERSON", "Grace Liu"], ["PHONE", "(212) 555-0198"], ["EMAIL", "grace.liu@example.org"]]}
+{"lang": "en", "text": "The tenant, Michael O'Connor, lives at 9 Willow Lane, Austin, TX 78701.", "spans": [["PERSON", "Michael O'Connor"], ["ADDRESS", "9 Willow Lane, Austin, TX 78701"]]}
+{"lang": "en", "text": "Write a polite refusal to Hannah Weiss regarding her refund request.", "spans": [["PERSON", "Hannah Weiss"]]}
+{"lang": "en", "text": "Lucas Moreau and Emma Novak both approved the budget.", "spans": [["PERSON", "Lucas Moreau"], ["PERSON", "Emma Novak"]]}
+{"lang": "en", "text": "Explain how a binary search tree keeps its keys ordered.", "spans": []}
+{"lang": "en", "text": "What is the difference between TCP and UDP for streaming video?", "spans": []}
+{"lang": "en", "text": "Refactor this function so that it returns early when the list is empty.", "spans": []}
+{"lang": "en", "text": "Write a haiku about autumn leaves falling on a quiet lake.", "spans": []}
+{"lang": "en", "text": "The quarterly report shows revenue grew in every region except the north.", "spans": []}
+{"lang": "en", "text": "Convert this recipe from cups to grams and keep the oven at 180 degrees.", "spans": []}
+{"lang": "en", "text": "Our sprint goal is to ship the login page and fix the cache bug.", "spans": []}
+{"lang": "en", "text": "Translate 'good morning, how are you?' into Spanish and Italian.", "spans": []}
+{"lang": "fr", "text": "Merci d'envoyer le contrat signé à Hélène Dubois avant vendredi.", "spans": [["PERSON", "Hélène Dubois"]]}
+{"lang": "fr", "text": "J'ai parlé hier avec Jean-Baptiste Lefèvre au sujet du renouvellement.", "spans": [["PERSON", "Jean-Baptiste Lefèvre"]]}
+{"lang": "fr", "text": "Le docteur Amélie Rousseau verra les résultats lundi.", "spans": [["PERSON", "Amélie Rousseau"]]}
+{"lang": "fr", "text": "tu peux répondre à julien moreau, il demande des nouvelles de la facture", "spans": [["PERSON", "julien moreau"]]}
+{"lang": "fr", "text": "Notre nouvelle recrue, Fatou Diallo, commence lundi à l'agence de Lyon.", "spans": [["PERSON", "Fatou Diallo"]]}
+{"lang": "fr", "text": "Livrez le colis au 12 rue de la Paix, 75002 Paris.", "spans": [["ADDRESS", "12 rue de la Paix, 75002 Paris"]]}
+{"lang": "fr", "text": "Son adresse est 8 allée des Tilleuls, 33000 Bordeaux.", "spans": [["ADDRESS", "8 allée des Tilleuls, 33000 Bordeaux"]]}
+{"lang": "fr", "text": "Rappelez-moi au 06 12 34 56 78 après 17 h.", "spans": [["PHONE", "06 12 34 56 78"]]}
+{"lang": "fr", "text": "Le numéro du client est le +33 1 42 68 53 00.", "spans": [["PHONE", "+33 1 42 68 53 00"]]}
+{"lang": "fr", "text": "Transférez le compte rendu à camille.bernard@exemple.fr s'il vous plaît.", "spans": [["EMAIL", "camille.bernard@exemple.fr"]]}
+{"lang": "fr", "text": "Le patient Marc Lefèvre, né le 3 mars 1981, se plaint de douleurs.", "spans": [["PERSON", "Marc Lefèvre"], ["DATE_OF_BIRTH", "3 mars 1981"]]}
+{"lang": "fr", "text": "Date de naissance : 22/03/1985. Nom : Laura Petit.", "spans": [["DATE_OF_BIRTH", "22/03/1985"], ["PERSON", "Laura Petit"]]}
+{"lang": "fr", "text": "Virez l'acompte sur l'IBAN FR76 3000 6000 0112 3456 7890 189 avant la date limite.", "spans": [["BANK_ACCOUNT", "FR76 3000 6000 0112 3456 7890 189"]]}
+{"lang": "fr", "text": "Thomas Garnier, de la société Lumière Industries SAS, rejoindra l'appel.", "spans": [["PERSON", "Thomas Garnier"], ["ORGANIZATION", "Lumière Industries SAS"]]}
+{"lang": "fr", "text": "Résume ce mail de Sophie Marchand : la livraison au 4 quai Saint-Antoine, 69002 Lyon est retardée.", "spans": [["PERSON", "Sophie Marchand"], ["ADDRESS", "4 quai Saint-Antoine, 69002 Lyon"]]}
+{"lang": "fr", "text": "Rappelle à Karim Benali que son rendez-vous est déplacé à 15 h.", "spans": [["PERSON", "Karim Benali"]]}
+{"lang": "fr", "text": "Contact : Chloé Lambert, tél. 07 81 22 45 90, courriel chloe.lambert@exemple.org", "spans": [["PERSON", "Chloé Lambert"], ["PHONE", "07 81 22 45 90"], ["EMAIL", "chloe.lambert@exemple.org"]]}
+{"lang": "fr", "text": "Le locataire, Antoine Girard, habite au 27 boulevard Victor Hugo, 06000 Nice.", "spans": [["PERSON", "Antoine Girard"], ["ADDRESS", "27 boulevard Victor Hugo, 06000 Nice"]]}
+{"lang": "fr", "text": "Rédige un refus poli à Manon Faure concernant sa demande de remboursement.", "spans": [["PERSON", "Manon Faure"]]}
+{"lang": "fr", "text": "Lucie Morel et Hugo Lefort ont tous deux validé le budget.", "spans": [["PERSON", "Lucie Morel"], ["PERSON", "Hugo Lefort"]]}
+{"lang": "fr", "text": "Explique comment un arbre binaire de recherche garde ses clés triées.", "spans": []}
+{"lang": "fr", "text": "Quelle est la différence entre TCP et UDP pour la vidéo en direct ?", "spans": []}
+{"lang": "fr", "text": "Réécris cette fonction pour qu'elle s'arrête tôt quand la liste est vide.", "spans": []}
+{"lang": "fr", "text": "Écris un haïku sur les feuilles d'automne qui tombent sur un lac calme.", "spans": []}
+{"lang": "fr", "text": "Le rapport trimestriel montre une hausse du chiffre d'affaires dans toutes les régions sauf le nord.", "spans": []}
+{"lang": "fr", "text": "Convertis cette recette des tasses en grammes et garde le four à 180 degrés.", "spans": []}
+{"lang": "fr", "text": "L'objectif du sprint est de livrer la page de connexion et de corriger le bug du cache.", "spans": []}
+{"lang": "fr", "text": "Traduis « bonjour, comment ça va ? » en espagnol et en italien.", "spans": []}

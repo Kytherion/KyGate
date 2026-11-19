@@ -1,0 +1,50 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: No Enterprise source in the public repository
+        # KyGate Enterprise lives in a private repository; this one is Community only.
+        run: |
+          if git ls-files | grep -E '_ee(_test)?\.go$|^LICENSE\.enterprise$|^docs/internal/|^CLAUDE\.md$'; then
+            echo "Enterprise or private files are committed: remove them from this repository."; exit 1
+          fi
+      - name: Vet
+        run: go vet ./...
+      - name: Unit, end-to-end, and eval tests
+        # The end-to-end tests run the first-run path against a stand-in provider.
+        # eval/ holds the quality gates: detection precision and recall, masking stability.
+        run: go test -count=1 ./...
+      - name: Console script syntax
+        run: node --check web/static/app.js
+      - name: Build
+        # Stripped, as releases are: one binary with every option, turned on by configuration.
+        run: CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o kygate ./cmd/kygate
+      - name: Known vulnerabilities in dependencies
+        # The dependencies are the cost watched, not the size.
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+      - name: Vet the other systems
+        # 'kygate service' has one file per operating system.
+        run: GOOS=windows go vet ./cmd/... && GOOS=darwin go vet ./cmd/...
+
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the Guard
+        run: pip install "./guard[test]"
+      - name: Guard tests
+        # The Guard against its gRPC contract: byte offsets, readiness, recognizers.
+        run: cd guard && pytest -q

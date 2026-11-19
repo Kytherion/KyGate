@@ -1,0 +1,52 @@
+{
+  "format": 1,
+  "name": "prompt-injection",
+  "default": true,
+  "title": "Wolf Defender prompt-injection classifier, small (Patronus), FP16 ONNX",
+  "task": "prompt_injection",
+  "runtime": "onnx-sequence-classifier",
+  "version": "2484cc9a13550aa4f2c29b577ff3ef331dc6ba07",
+  "source": "https://huggingface.co/patronus-studio/wolf-defender-prompt-injection-small",
+  "license": "Apache-2.0",
+  "languages": [
+    "en",
+    "de"
+  ],
+  "notice": "Model: patronus-studio/wolf-defender-prompt-injection-small (Apache-2.0, LICENSE file in the repository), fine-tuned from jhu-clsp/mmBERT-small (MIT). Its card names English and German as the evaluated languages and describes its training data as public-source and internally developed examples, without naming each source or its license.",
+  "files": [
+    {
+      "path": "model.onnx",
+      "url": "https://huggingface.co/patronus-studio/wolf-defender-prompt-injection-small/resolve/2484cc9a13550aa4f2c29b577ff3ef331dc6ba07/onnx/onnx_fp16/model_fp16.onnx",
+      "size": 281826832,
+      "sha256": "784f121e1a9acf8b40967911420d81b654caffe6313d9aee70816e18f786726e"
+    },
+    {
+      "path": "tokenizer.json",
+      "url": "https://huggingface.co/patronus-studio/wolf-defender-prompt-injection-small/resolve/2484cc9a13550aa4f2c29b577ff3ef331dc6ba07/tokenizer.json",
+      "size": 34363188,
+      "sha256": "609d8f4c067cd3950f88594c5a802616cea245823836ef5848ee4fc40aab5b6f"
+    },
+    {
+      "path": "config.json",
+      "url": "https://huggingface.co/patronus-studio/wolf-defender-prompt-injection-small/resolve/2484cc9a13550aa4f2c29b577ff3ef331dc6ba07/config.json",
+      "size": 2065,
+      "sha256": "8717a09329fd5f7e8477b6fd6b32b553a89f8421d47b4f9b108f42a59389d0f8"
+    },
+    {
+      "path": "special_tokens_map.json",
+      "url": "https://huggingface.co/patronus-studio/wolf-defender-prompt-injection-small/resolve/2484cc9a13550aa4f2c29b577ff3ef331dc6ba07/special_tokens_map.json",
+      "size": 173,
+      "sha256": "7cf83385f6801f5a3af8cd6361a898b3d91975d12b5fd1a5230b0d39eeb42589"
+    }
+  ],
+  "labels": "config.json",
+  "label_map": {},
+  "threat_map": {
+    "INJECTION": "PROMPT_INJECTION"
+  },
+  "settings": {
+    "window_tokens": 512,
+    "overlap_tokens": 64,
+    "pooling": "smoothmax"
+  }
+}

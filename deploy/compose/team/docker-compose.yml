@@ -1,0 +1,138 @@
+# KyGate Team profile: two gateways behind Caddy, one control process,
+# PostgreSQL, and two Valkey instances. See docs/deployment.md, "The Team profile".
+#
+#   cp .env.example .env     # then set KYGATE_MASTER_KEY and POSTGRES_PASSWORD
+#   docker compose up -d     # from this directory
+#   docker compose logs control   # the first start prints a virtual key and an admin token, once
+#
+# Clients use http://localhost:4000/v1 (OpenAI SDKs) or http://localhost:4000
+# (Anthropic SDKs); the console is http://localhost:4001. Both are published on
+# the loopback interface only.
+#
+# Coming from Solo: copy the old installation into PostgreSQL first, with the
+# same master key:  kygate store copy --to postgres://... --data-dir OLD_DIR
+
+x-kygate: &kygate
+  build:
+    context: ../../..
+  image: kygate:0.1.0
+  restart: unless-stopped
+  stop_grace_period: 40s   # open streams get 30 seconds to finish
+  environment: &env
+    KYGATE_DATABASE_URL: postgres://kygate:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/kygate?sslmode=disable
+    KYGATE_COUNTERS_URL: redis://valkey-counters:6379
+    KYGATE_CACHE_URL: redis://valkey-cache:6379
+    # Every process must use the same master key: it seals provider keys and cache entries.
+    # Set one of the two in .env: the key itself, or the key wrapped by Vault or a cloud KMS
+    # ('kygate master-key new --kms URI'), with the service's access below.
+    KYGATE_MASTER_KEY: ${KYGATE_MASTER_KEY:-}
+    KYGATE_MASTER_KEY_WRAPPED: ${KYGATE_MASTER_KEY_WRAPPED:-}
+    KYGATE_KMS: ${KYGATE_KMS:-}
+    VAULT_ADDR: ${VAULT_ADDR:-}
+    VAULT_TOKEN: ${VAULT_TOKEN:-}
+    VAULT_ROLE_ID: ${VAULT_ROLE_ID:-}
+    VAULT_SECRET_ID: ${VAULT_SECRET_ID:-}
+    # Provider keys pass through from .env or your shell; unset ones are ignored.
+    # They can also be stored, sealed, from the console or 'kygate provider add'.
+    OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}        # for OpenAI-compatible services
+    ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+    KYGATE_GUARD: ${KYGATE_GUARD:-}
+  depends_on:
+    postgres: { condition: service_healthy }
+    valkey-counters: { condition: service_started }
+    valkey-cache: { condition: service_started }
+
+services:
+  # The console, the admin API, first-start setup, retention, and the audit
+  # ledger. Policies live in PostgreSQL: an installation that kept them in this
+  # volume (policy.yaml, policies/) has them imported once, at the next start.
+  control:
+    <<: *kygate
+    command: ["serve", "--role=control"]
+    ports:
+      - "127.0.0.1:${KYGATE_CONSOLE_PORT:-4001}:4001"
+    volumes:
+      - control-data:/data
+
+  gateway1:
+    <<: *kygate
+    command: ["serve", "--role=gateway"]
+    volumes:
+      - gateway1-data:/data            # its own event spool; policies come from the database
+    depends_on:
+      control: { condition: service_started }
+
+  gateway2:
+    <<: *kygate
+    command: ["serve", "--role=gateway"]
+    volumes:
+      - gateway2-data:/data
+    depends_on:
+      control: { condition: service_started }
+
+  # One address for clients, spread over the two gateways.
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${KYGATE_PORT:-4000}:4000"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on: [gateway1, gateway2]
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kygate
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: kygate
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kygate -d kygate"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # Budget and rate counters: never evicted, written to disk.
+  valkey-counters:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    command: ["valkey-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - counters-data:/data
+
+  # The exact cache: the least recently used entries go when it is full.
+  valkey-cache:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    command: ["valkey-server", "--save", "", "--appendonly", "no", "--maxmemory", "${KYGATE_CACHE_MEMORY:-1gb}", "--maxmemory-policy", "allkeys-lru"]
+
+  # Optional: the Guard, two instances (--profile guard), as in the Solo file.
+  guard1:
+    profiles: ["guard"]
+    build:
+      context: ../../../guard
+      args:
+        EXTRAS: ${KYGATE_GUARD_EXTRAS:-}
+    image: kygate-guard:0.1.0
+    restart: unless-stopped
+    volumes:
+      - kygate-models:/models
+  guard2:
+    profiles: ["guard"]
+    image: kygate-guard:0.1.0
+    restart: unless-stopped
+    volumes:
+      - kygate-models:/models
+
+volumes:
+  control-data:
+  gateway1-data:
+  gateway2-data:
+  postgres-data:
+  counters-data:
+  kygate-models:

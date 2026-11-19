@@ -1,0 +1,31 @@
+# Keep the build context small and free of local secrets and data.
+.git
+.git-ee
+.github
+docs/internal
+CLAUDE.md
+*.exe
+*.exe~
+*~
+/kygate
+/bin
+/dist
+
+# Local data, keys, and environment files
+.kygate
+kygate-data
+*.db
+*.db-shm
+*.db-wal
+master.key
+master.key.wrapped
+.env
+.env.*
+
+# Python environments and caches (the Guard has its own Dockerfile)
+guard/.venv
+**/__pycache__
+**/*.pyc
+**/*.egg-info
+node_modules
+coverage.out

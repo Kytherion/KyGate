@@ -1,0 +1,60 @@
+{"lang": "en", "same": true, "kind": "synonym", "a": "How do I reset my password?", "b": "How can I change my forgotten password?"}
+{"lang": "en", "same": true, "kind": "synonym", "a": "What is the capital of Australia?", "b": "Which city is Australia's capital?"}
+{"lang": "en", "same": true, "kind": "synonym", "a": "How do I undo the last git commit?", "b": "How can I revert my most recent git commit?"}
+{"lang": "en", "same": true, "kind": "synonym", "a": "What does HTTP status 404 mean?", "b": "What is the meaning of the HTTP 404 status code?"}
+{"lang": "en", "same": true, "kind": "synonym", "a": "How do I sort a list in Python?", "b": "What's the way to order a Python list?"}
+{"lang": "en", "same": true, "kind": "synonym", "a": "Explain what a mutex is.", "b": "Can you describe what a mutex is?"}
+{"lang": "en", "same": true, "kind": "synonym", "a": "How long should I boil an egg?", "b": "How many minutes does it take to boil an egg?"}
+{"lang": "en", "same": true, "kind": "synonym", "a": "What is the difference between TCP and UDP?", "b": "How do TCP and UDP differ?"}
+{"lang": "en", "same": true, "kind": "synonym", "a": "Write a polite email declining a meeting.", "b": "Draft a courteous email turning down a meeting."}
+{"lang": "en", "same": true, "kind": "synonym", "a": "How do I convert a string to an integer in Java?", "b": "How can I turn a string into an int in Java?"}
+{"lang": "en", "same": true, "kind": "synonym", "a": "What are the symptoms of dehydration?", "b": "What are the signs of dehydration?"}
+{"lang": "en", "same": true, "kind": "synonym", "a": "Summarize the causes of World War I.", "b": "Give a summary of what caused the First World War."}
+{"lang": "en", "same": true, "kind": "synonym", "a": "How do I remove a Docker container?", "b": "How can I delete a Docker container?"}
+{"lang": "en", "same": true, "kind": "synonym", "a": "What is a good name for a bakery?", "b": "Suggest a good name for a bakery."}
+{"lang": "en", "same": true, "kind": "synonym", "a": "Why is the sky blue?", "b": "What makes the sky appear blue?"}
+{"lang": "en", "same": false, "kind": "entity", "a": "What is the capital of France?", "b": "What is the capital of Germany?"}
+{"lang": "en", "same": false, "kind": "entity", "a": "How do I sort a list in Python?", "b": "How do I sort a list in JavaScript?"}
+{"lang": "en", "same": false, "kind": "entity", "a": "How do I remove a Docker container?", "b": "How do I remove a Docker image?"}
+{"lang": "en", "same": false, "kind": "entity", "a": "What are the symptoms of dehydration?", "b": "What are the symptoms of diabetes?"}
+{"lang": "en", "same": false, "kind": "entity", "a": "Who wrote Hamlet?", "b": "Who wrote Macbeth?"}
+{"lang": "en", "same": false, "kind": "related", "a": "How do I reset my password?", "b": "How do I choose a strong password?"}
+{"lang": "en", "same": false, "kind": "related", "a": "What is the difference between TCP and UDP?", "b": "When should I use UDP?"}
+{"lang": "en", "same": false, "kind": "related", "a": "How do I undo the last git commit?", "b": "How do I push my last git commit?"}
+{"lang": "en", "same": false, "kind": "related", "a": "Write a polite email declining a meeting.", "b": "Write a polite email accepting a meeting."}
+{"lang": "en", "same": false, "kind": "related", "a": "What is a good name for a bakery?", "b": "What is a good logo for a bakery?"}
+{"lang": "en", "same": false, "kind": "direction", "a": "How do I convert Celsius to Fahrenheit?", "b": "How do I convert Fahrenheit to Celsius?"}
+{"lang": "en", "same": false, "kind": "direction", "a": "Is Python faster than Java?", "b": "Is Java faster than Python?"}
+{"lang": "en", "same": false, "kind": "negation", "a": "Why does my code compile?", "b": "Why doesn't my code compile?"}
+{"lang": "en", "same": false, "kind": "number", "a": "How long should I boil an egg for 2 people?", "b": "How long should I boil an egg for 6 people?"}
+{"lang": "en", "same": false, "kind": "related", "a": "Explain what a mutex is.", "b": "Explain what a semaphore is."}
+{"lang": "fr", "same": true, "kind": "synonym", "a": "Comment réinitialiser mon mot de passe ?", "b": "Comment changer mon mot de passe oublié ?"}
+{"lang": "fr", "same": true, "kind": "synonym", "a": "Quelle est la capitale de l'Australie ?", "b": "Quelle ville est la capitale de l'Australie ?"}
+{"lang": "fr", "same": true, "kind": "synonym", "a": "Comment annuler le dernier commit git ?", "b": "Comment revenir sur mon dernier commit git ?"}
+{"lang": "fr", "same": true, "kind": "synonym", "a": "Que signifie le code HTTP 404 ?", "b": "Quelle est la signification du statut HTTP 404 ?"}
+{"lang": "fr", "same": true, "kind": "synonym", "a": "Comment trier une liste en Python ?", "b": "Comment ordonner une liste Python ?"}
+{"lang": "fr", "same": true, "kind": "synonym", "a": "Explique ce qu'est un mutex.", "b": "Peux-tu décrire ce qu'est un mutex ?"}
+{"lang": "fr", "same": true, "kind": "synonym", "a": "Combien de temps faut-il cuire un œuf ?", "b": "Combien de minutes pour cuire un œuf ?"}
+{"lang": "fr", "same": true, "kind": "synonym", "a": "Quelle est la différence entre TCP et UDP ?", "b": "En quoi TCP et UDP diffèrent-ils ?"}
+{"lang": "fr", "same": true, "kind": "synonym", "a": "Écris un e-mail poli pour refuser une réunion.", "b": "Rédige un courriel courtois pour décliner une réunion."}
+{"lang": "fr", "same": true, "kind": "synonym", "a": "Comment convertir une chaîne en entier en Java ?", "b": "Comment transformer une chaîne en int en Java ?"}
+{"lang": "fr", "same": true, "kind": "synonym", "a": "Quels sont les symptômes de la déshydratation ?", "b": "Quels sont les signes de la déshydratation ?"}
+{"lang": "fr", "same": true, "kind": "synonym", "a": "Résume les causes de la Première Guerre mondiale.", "b": "Fais un résumé de ce qui a causé la Grande Guerre."}
+{"lang": "fr", "same": true, "kind": "synonym", "a": "Comment supprimer un conteneur Docker ?", "b": "Comment effacer un conteneur Docker ?"}
+{"lang": "fr", "same": true, "kind": "synonym", "a": "Quel est un bon nom pour une boulangerie ?", "b": "Propose un bon nom pour une boulangerie."}
+{"lang": "fr", "same": true, "kind": "synonym", "a": "Pourquoi le ciel est-il bleu ?", "b": "Qu'est-ce qui rend le ciel bleu ?"}
+{"lang": "fr", "same": false, "kind": "entity", "a": "Quelle est la capitale de la France ?", "b": "Quelle est la capitale de l'Allemagne ?"}
+{"lang": "fr", "same": false, "kind": "entity", "a": "Comment trier une liste en Python ?", "b": "Comment trier une liste en JavaScript ?"}
+{"lang": "fr", "same": false, "kind": "entity", "a": "Comment supprimer un conteneur Docker ?", "b": "Comment supprimer une image Docker ?"}
+{"lang": "fr", "same": false, "kind": "entity", "a": "Quels sont les symptômes de la déshydratation ?", "b": "Quels sont les symptômes du diabète ?"}
+{"lang": "fr", "same": false, "kind": "entity", "a": "Qui a écrit Hamlet ?", "b": "Qui a écrit Macbeth ?"}
+{"lang": "fr", "same": false, "kind": "related", "a": "Comment réinitialiser mon mot de passe ?", "b": "Comment choisir un mot de passe robuste ?"}
+{"lang": "fr", "same": false, "kind": "related", "a": "Quelle est la différence entre TCP et UDP ?", "b": "Quand faut-il utiliser UDP ?"}
+{"lang": "fr", "same": false, "kind": "related", "a": "Comment annuler le dernier commit git ?", "b": "Comment pousser mon dernier commit git ?"}
+{"lang": "fr", "same": false, "kind": "related", "a": "Écris un e-mail poli pour refuser une réunion.", "b": "Écris un e-mail poli pour accepter une réunion."}
+{"lang": "fr", "same": false, "kind": "related", "a": "Quel est un bon nom pour une boulangerie ?", "b": "Quel est un bon logo pour une boulangerie ?"}
+{"lang": "fr", "same": false, "kind": "direction", "a": "Comment convertir des Celsius en Fahrenheit ?", "b": "Comment convertir des Fahrenheit en Celsius ?"}
+{"lang": "fr", "same": false, "kind": "direction", "a": "Python est-il plus rapide que Java ?", "b": "Java est-il plus rapide que Python ?"}
+{"lang": "fr", "same": false, "kind": "negation", "a": "Pourquoi mon code compile-t-il ?", "b": "Pourquoi mon code ne compile-t-il pas ?"}
+{"lang": "fr", "same": false, "kind": "number", "a": "Combien de temps cuire un œuf pour 2 personnes ?", "b": "Combien de temps cuire un œuf pour 6 personnes ?"}
+{"lang": "fr", "same": false, "kind": "related", "a": "Explique ce qu'est un mutex.", "b": "Explique ce qu'est un sémaphore."}

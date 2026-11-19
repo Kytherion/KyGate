@@ -1,0 +1,22 @@
+KyGate {{ .Chart.AppVersion }} is installed as "{{ .Release.Name }}".
+{{- if .Values.dev.enabled }}
+
+  dev.enabled: single-instance PostgreSQL and Valkeys, and a generated master
+  key in a plain Secret. For trying KyGate only.
+{{- end }}
+
+The first start prints a virtual key and an admin token, once:
+
+  kubectl logs -n {{ .Release.Namespace }} deploy/{{ include "kygate.fullname" . }}-control | grep -E 'Virtual key|Admin token'
+
+Model API (OpenAI SDKs use .../v1; Anthropic SDKs the address itself):
+
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "kygate.fullname" . }}-gateway 4000:{{ .Values.gateway.service.port }}
+
+Console:
+
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "kygate.fullname" . }}-control 4001:{{ .Values.control.service.port }}
+{{- if and .Values.gateway.autoscaling.enabled }}
+
+The gateways{{ if .Values.guard.enabled }} and the Guard{{ end }} scale on CPU: the cluster needs metrics-server.
+{{- end }}

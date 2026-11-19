@@ -1,0 +1,14 @@
+# Evaluation suite
+
+Benchmarks and quality gates. The suite runs in CI.
+
+| Folder | Measures |
+|---|---|
+| `detection/` | Precision and recall per data type and per language. A missed detection is a leak; a false alarm is a broken prompt |
+| `cache/` | The exact cache on disk: survival across a restart, and no readable text in the file. The semantic-cache false-hit rate. Masking stability across turns (byte-identical prefixes) |
+| `routing/` | Routing quality: the rules on a corpus of real request bodies (no hard request called easy; at least 80% of easy ones moved). Later: samples of cheaper answers compared with the requested model's |
+| `load/` | Load tests against the latency targets and the capacity estimates in [architecture.md §5](../docs/architecture.md#5-scaling-from-1-to-100000-users) |
+
+Use synthetic data only. Never commit real prompts, personal data, or credentials.
+
+Status: `detection/` runs in CI (`go test ./eval/...`): precision and recall per data type on a synthetic corpus, with floors that fail the build. `cache/` runs for the exact cache kept on disk: every entry survives a restart, the file holds no readable text, and entries sealed under another master key are misses. `cache/` also gates the semantic cache: zero false hits from the hard checks against a bag-of-words stand-in embedder at the loosest threshold, and at least 90% of look-alikes served. The real model's false-hit rate is measured in shadow mode on real traffic. The Guard's model packs have their own gates, in Python, on corpora kept here: `detection/corpus/personal_data_en_fr.jsonl` (`guard/tests/test_eval_personal_data.py`) and `detection/corpus/prompt_injection_en_fr.jsonl` (`guard/tests/test_eval_prompt_injection.py`: recall at least 0.90 and false alarms at most 0.10 per language); each runs when its pack is installed. `cache/corpus/same_question_en_fr.jsonl` holds 60 English and French question pairs (rewordings that should match; near misses by entity, direction, negation, number, or topic that must not) for choosing a future second-check model for the semantic cache. `detection/output_test.go` gates output inspection: every leak in its corpus found, no false alarm on its harmless answers, and every answer the same whether it arrives whole or streamed in pieces of any size. Masking stability across turns and the first-run path are covered by the end-to-end tests in `internal/pipeline`. `detection/output_stream_test.go` is the differential gate of streams: generated answers mixing every construct, streamed in random pieces, must come out exactly as whole, and answers with constructs longer than the hold-back leak nothing. `load/` gates on the gateway's own time, cache-hit time to first byte, the memory of 1,000 open streams, and throughput, with every answer checked; and `kyload`, which loads a real installation against a stand-in provider. Its measured numbers are in [load/README.md](load/README.md).

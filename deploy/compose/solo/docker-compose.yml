@@ -1,0 +1,59 @@
+# KyGate Solo profile: one container, embedded storage.
+#
+#   export ANTHROPIC_API_KEY=...   # and/or OPENAI_API_KEY=...
+#   docker compose up              # from this directory
+#
+# The first start prints a virtual key and an admin token in the log, once:
+#   docker compose logs kygate
+#
+# Point clients at http://localhost:4000/v1 (OpenAI SDKs) or
+# http://localhost:4000 (Anthropic SDKs). The console is http://localhost:4001.
+# Both ports are published on the loopback interface only.
+
+services:
+  kygate:
+    build:
+      context: ../../..
+    image: kygate:0.1.0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4000:4000"
+      - "127.0.0.1:4001:4001"
+    environment:
+      # Provider keys pass through from your shell; unset ones are ignored.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # A local model server on the host, for example Ollama:
+      # KYGATE_LOCAL_OLLAMA: http://host.docker.internal:11434/v1
+      # The Guard (ML detection), when started with the "guard" profile:
+      #   KYGATE_GUARD=guard:4002 docker compose --profile guard up -d
+      KYGATE_GUARD: ${KYGATE_GUARD:-}
+    volumes:
+      - kygate-data:/data
+    stop_grace_period: 40s   # open streams get 30 seconds to finish
+
+  # Optional: the Guard, needed only when the policy names an ML data type.
+  # Two levels: recognizers (a file of names and patterns), and model packs.
+  #   Recognizers: put recognizers.json in ./guard/ next to this file, and
+  #     uncomment the command and the ./guard volume below.
+  #   Models: build with the ML software, then pull a pack once into the
+  #     kygate-models volume (nothing is ever downloaded on its own):
+  #     KYGATE_GUARD_EXTRAS=ml docker compose --profile guard build guard
+  #     docker compose --profile guard run --rm guard models pull                 # the default pack
+  #     docker compose --profile guard run --rm guard models pull personal-data   # an add-on, if needed
+  guard:
+    profiles: ["guard"]
+    build:
+      context: ../../../guard
+      args:
+        EXTRAS: ${KYGATE_GUARD_EXTRAS:-}
+    image: kygate-guard:0.1.0
+    restart: unless-stopped
+    # command: ["--recognizers", "/config/recognizers.json"]
+    volumes:
+      - kygate-models:/models
+    #  - ./guard:/config:ro
+
+volumes:
+  kygate-data:
+  kygate-models:

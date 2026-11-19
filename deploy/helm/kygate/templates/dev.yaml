@@ -1,0 +1,110 @@
+{{- if .Values.dev.enabled }}
+{{- /* For trying KyGate only: single-instance PostgreSQL and two Valkeys, and
+a master key generated once. Not for production: no backups, no replicas,
+and the master key sits in a plain Secret. */}}
+{{- $fn := include "kygate.fullname" . -}}
+{{- $pgSecret := lookup "v1" "Secret" .Release.Namespace (printf "%s-dev-stores" $fn) -}}
+{{- $pgPassword := randAlphaNum 24 -}}
+{{- if $pgSecret }}{{- $pgPassword = index $pgSecret.data "POSTGRES_PASSWORD" | b64dec -}}{{- end }}
+{{- $mkSecret := lookup "v1" "Secret" .Release.Namespace (printf "%s-dev-master-key" $fn) -}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $fn }}-dev-stores
+  labels: {{- include "kygate.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: {{ $pgPassword | quote }}
+  KYGATE_DATABASE_URL: {{ printf "postgres://kygate:%s@%s-dev-postgres:5432/kygate?sslmode=disable" $pgPassword $fn | quote }}
+  KYGATE_COUNTERS_URL: {{ printf "redis://%s-dev-valkey-counters:6379" $fn | quote }}
+  KYGATE_CACHE_URL: {{ printf "redis://%s-dev-valkey-cache:6379" $fn | quote }}
+{{- if not .Values.masterKey.existingSecret }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $fn }}-dev-master-key
+  labels: {{- include "kygate.labels" . | nindent 4 }}
+  annotations: { helm.sh/resource-policy: keep }
+type: Opaque
+data:
+{{- if $mkSecret }}
+  KYGATE_MASTER_KEY: {{ index $mkSecret.data "KYGATE_MASTER_KEY" }}
+{{- else }}
+  KYGATE_MASTER_KEY: {{ randBytes 32 | b64enc }}
+{{- end }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $fn }}-dev-postgres
+  labels: {{- include "kygate.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ $fn }}-dev-postgres
+  replicas: 1
+  selector:
+    matchLabels: {{- include "kygate.selector" (dict "root" . "component" "dev-postgres") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "kygate.selector" (dict "root" . "component" "dev-postgres") | nindent 8 }}
+    spec:
+      containers:
+        - name: postgres
+          image: {{ .Values.dev.postgres.image }}
+          env:
+            - { name: POSTGRES_USER, value: kygate }
+            - { name: POSTGRES_DB, value: kygate }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $fn }}-dev-stores, key: POSTGRES_PASSWORD } }
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          ports: [{ name: pg, containerPort: 5432 }]
+          readinessProbe:
+            exec: { command: [pg_isready, -U, kygate, -d, kygate] }
+            periodSeconds: 3
+          volumeMounts: [{ name: data, mountPath: /var/lib/postgresql/data }]
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: { requests: { storage: 2Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fn }}-dev-postgres
+  labels: {{- include "kygate.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "kygate.selector" (dict "root" . "component" "dev-postgres") | nindent 4 }}
+  ports: [{ name: pg, port: 5432, targetPort: pg }]
+{{- range $which, $args := dict "counters" (list "valkey-server" "--appendonly" "yes" "--maxmemory-policy" "noeviction") "cache" (list "valkey-server" "--save" "" "--appendonly" "no" "--maxmemory" $.Values.dev.valkey.cacheMemory "--maxmemory-policy" "allkeys-lru") }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fn }}-dev-valkey-{{ $which }}
+  labels: {{- include "kygate.labels" $ | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {{- include "kygate.selector" (dict "root" $ "component" (printf "dev-valkey-%s" $which)) | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "kygate.selector" (dict "root" $ "component" (printf "dev-valkey-%s" $which)) | nindent 8 }}
+    spec:
+      containers:
+        - name: valkey
+          image: {{ $.Values.dev.valkey.image }}
+          args: {{- toJson $args | nindent 12 }}
+          ports: [{ name: valkey, containerPort: 6379 }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fn }}-dev-valkey-{{ $which }}
+  labels: {{- include "kygate.labels" $ | nindent 4 }}
+spec:
+  selector: {{- include "kygate.selector" (dict "root" $ "component" (printf "dev-valkey-%s" $which)) | nindent 4 }}
+  ports: [{ name: valkey, port: 6379, targetPort: valkey }]
+{{- end }}
+{{- end }}

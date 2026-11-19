@@ -1,0 +1,130 @@
+// The contract between the KyGate gateway and the Guard (architecture §4.4).
+//
+// The Guard detects; the gateway enforces. The Guard returns findings and
+// threat scores only. Masking, blocking, and the placeholder-to-value map stay
+// in the gateway (invariant 1). The Guard holds no state.
+//
+// Offsets are UTF-8 byte offsets into Segment.text, end exclusive. Python
+// counts characters and Go counts bytes, so the Guard converts.
+syntax = "proto3";
+
+package kygate.guard.v1;
+
+option go_package = "github.com/Kytherion/KyGate/internal/detect/guard/guardpb;guardpb";
+
+service Guard {
+  // Findings and threats for segments the gateway has not seen before.
+  rpc Inspect(InspectRequest) returns (InspectResponse);
+  // Vectors for the semantic cache and the router. The input is already masked.
+  rpc Embed(EmbedRequest) returns (EmbedResponse);
+  // Second-stage check of semantic-cache candidates.
+  rpc Rerank(RerankRequest) returns (RerankResponse);
+  // The Guard's models, languages, and readiness.
+  rpc Info(InfoRequest) returns (InfoResponse);
+}
+
+enum Role {
+  ROLE_UNSPECIFIED = 0;
+  ROLE_SYSTEM = 1;
+  ROLE_USER = 2;
+  ROLE_ASSISTANT = 3;
+  ROLE_TOOL_RESULT = 4;
+  ROLE_INPUT = 5; // embedding input
+}
+
+enum ContentKind {
+  CONTENT_KIND_UNSPECIFIED = 0;
+  CONTENT_KIND_PROSE = 1;
+  CONTENT_KIND_CODE = 2;
+  CONTENT_KIND_STRUCTURED = 3; // JSON, such as tool-call arguments
+}
+
+message Segment {
+  string id = 1;        // position in the request, for example "messages.3.content.0"
+  Role role = 2;
+  ContentKind kind = 3;
+  bool untrusted = 4;   // run threat detectors on this segment
+  string text = 5;
+}
+
+message InspectRequest {
+  repeated Segment segments = 1;
+  // The data types the policy acts on, such as PERSON or LOCATION. The Guard
+  // runs only the detectors these need. Empty: every type it knows.
+  repeated string entity_types = 2;
+  // The threats the policy acts on, such as PROMPT_INJECTION. Empty: none.
+  repeated string threat_types = 3;
+  string policy_version = 4;
+}
+
+message Finding {
+  string segment_id = 1;
+  string entity_type = 2; // PERSON, LOCATION, PHONE, ...
+  uint32 start = 3;       // UTF-8 byte offsets, end exclusive
+  uint32 end = 4;
+  float score = 5;
+  string detector = 6;    // name and version
+  string language = 7;    // detected language of the segment, such as "en" or "fr"; empty if unknown
+}
+
+message Threat {
+  string segment_id = 1;
+  string type = 2;        // PROMPT_INJECTION, ...
+  float score = 3;
+  string detector = 4;
+}
+
+message InspectResponse {
+  repeated Finding findings = 1;
+  repeated Threat threats = 2;
+}
+
+message EmbedRequest {
+  repeated string texts = 1;
+}
+
+message Vector {
+  repeated float values = 1;
+}
+
+message EmbedResponse {
+  repeated Vector vectors = 1; // one per text, in order
+  string model = 2;
+}
+
+message RerankRequest {
+  string query = 1;
+  repeated string candidates = 2;
+}
+
+message RerankResponse {
+  repeated float scores = 1; // one per candidate, in order; higher is more similar
+  string model = 2;
+}
+
+message InfoRequest {}
+
+message Model {
+  string task = 1;     // personal_data, prompt_injection, embed, rerank
+  string name = 2;
+  string version = 3;  // the pinned digest
+  string license = 4;
+}
+
+message InfoResponse {
+  string version = 1;
+  bool ready = 2;                  // models loaded and warmed up
+  repeated string entity_types = 3; // the data types it can find
+  repeated string threat_types = 4;
+  repeated string languages = 5;
+  repeated Model models = 6;
+  // Which level covers each data type, so that KyGate can show it and a
+  // policy can require a model (detection: model).
+  repeated Coverage coverage = 7;
+}
+
+message Coverage {
+  string entity_type = 1;
+  string level = 2;              // "model" if any model finds it, else "list"
+  repeated string detectors = 3; // every detector that finds it, such as "recognizers/1" or "eu-pii-v3"
+}

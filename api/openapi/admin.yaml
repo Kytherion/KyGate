@@ -1,0 +1,511 @@
+openapi: 3.1.0
+info:
+  title: KyGate reporting and admin API
+  version: 0.1.0
+  description: |
+    The reporting API behind the console, and the admin API. It is served on
+    the console port, apart from the model API. Every figure is metadata:
+    finding types and counts, never values or prompt text. Write operations
+    (the hierarchy, keys, providers, policies, purges) need the admin token
+    or a signed-in role that allows them.
+servers:
+  - url: http://127.0.0.1:4001
+security:
+  - adminToken: []
+  - session: []
+components:
+  securitySchemes:
+    adminToken:
+      type: http
+      scheme: bearer
+      description: The admin token printed at the first start, or by 'kygate admin-token reset'. Acts as admin.
+    scimToken:
+      type: http
+      scheme: bearer
+      description: The SCIM token printed by 'kygate scim token', for the identity provider. Works only under /scim/v2.
+    session:
+      type: apiKey
+      in: cookie
+      name: kygate_session
+      description: A console session (single sign-on or the admin token on the sign-in page), within its role. Every change also sends the session's CSRF value in the X-KyGate-CSRF header (from GET /auth/me).
+  parameters:
+    range:
+      name: range
+      in: query
+      schema: { type: string, enum: [1h, 24h, 7d, 30d, 90d], default: 7d }
+    from:
+      name: from
+      in: query
+      description: Start of the range, RFC 3339. Overrides range.
+      schema: { type: string, format: date-time }
+    to:
+      name: to
+      in: query
+      schema: { type: string, format: date-time }
+  schemas:
+    SecurityRow:
+      type: object
+      description: For one virtual key or one time bucket, how many requests had something to report. A request counts once per column.
+      properties:
+        key: { type: string, description: 'the virtual key name, "(no key)", or the bucket start' }
+        requests: { type: integer }
+        with_data: { type: integer, description: a data finding, from the fast detectors or the Guard }
+        threats: { type: integer, description: a threat finding, such as PROMPT_INJECTION }
+        answers_changed: { type: integer, description: output inspection removed or blocked something }
+        output_alerts: { type: integer, description: output inspection flagged and changed nothing }
+        blocked: { type: integer }
+        refused: { type: integer }
+        alerts: { type: integer }
+        guard_unavailable: { type: integer }
+    Totals:
+      type: object
+      properties:
+        requests: { type: integer }
+        input_tokens: { type: integer }
+        cached_input_tokens: { type: integer }
+        cache_write_tokens: { type: integer }
+        output_tokens: { type: integer }
+        cost_usd: { type: number }
+        cost_avoided_usd: { type: number, description: Money the cache avoided. }
+        cache_hits: { type: integer }
+        cache_misses: { type: integer }
+        blocked: { type: integer }
+        refused: { type: integer }
+        errors: { type: integer }
+        alerts: { type: integer }
+        unpriced: { type: integer, description: Requests to models the catalog does not price. }
+        avg_ms: { type: number }
+    Group:
+      allOf:
+        - $ref: '#/components/schemas/Totals'
+        - type: object
+          properties:
+            key: { type: string }
+    FindingCount:
+      type: object
+      properties:
+        type: { type: string, examples: [CREDIT_CARD, SECRET, dict/project-codenames, UNREADABLE/IMAGE] }
+        action: { type: string, enum: [allow, mask, redact, block, local_only, alert] }
+        count: { type: integer }
+        applied: { type: boolean, description: False when only recorded (monitor mode, or a refused request). }
+    Event:
+      type: object
+      properties:
+        id: { type: string }
+        ts: { type: string, format: date-time }
+        org_id: { type: string }
+        key_id: { type: string }
+        key_name: { type: string }
+        family: { type: string, enum: [openai, anthropic] }
+        endpoint: { type: string, enum: [chat, embeddings, messages, count_tokens] }
+        model_requested: { type: string }
+        model_served: { type: string }
+        connection: { type: string, description: Name of the provider key that served the request. Never the key. }
+        hosting: { type: string, enum: [local, external] }
+        stream: { type: boolean }
+        status: { type: integer }
+        outcome: { type: string, enum: [ok, blocked, refused, error, client_error, canceled] }
+        reason: { type: string }
+        cache: { type: string, enum: [hit, miss, bypass, off] }
+        cache_reason: { type: string }
+        mode: { type: string, enum: [enforce, monitor] }
+        policy_version: { type: string }
+        input_tokens: { type: integer }
+        cached_input_tokens: { type: integer }
+        cache_write_tokens: { type: integer }
+        output_tokens: { type: integer }
+        cost_usd: { type: number }
+        cost_avoided_usd: { type: number }
+        unpriced: { type: boolean }
+        findings: { type: array, items: { $ref: '#/components/schemas/FindingCount' } }
+        unreadable: { type: array, items: { type: string } }
+        stages_us: { type: object, additionalProperties: { type: integer } }
+        total_ms: { type: integer }
+        ttfb_ms: { type: integer }
+        attempts: { type: integer }
+paths:
+  /api/v1/info:
+    get:
+      summary: Installation, policy in force, cache and spool state
+      responses:
+        '200': { description: OK }
+  /api/v1/summary:
+    get:
+      summary: Totals for a range, and for the range before it
+      parameters: [{ $ref: '#/components/parameters/range' }, { $ref: '#/components/parameters/from' }, { $ref: '#/components/parameters/to' }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  totals: { $ref: '#/components/schemas/Totals' }
+                  previous: { $ref: '#/components/schemas/Totals' }
+  /api/v1/timeseries:
+    get:
+      summary: Totals per hour (ranges up to two days) or per day
+      parameters: [{ $ref: '#/components/parameters/range' }, { $ref: '#/components/parameters/from' }, { $ref: '#/components/parameters/to' }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  bucket: { type: string, enum: [hour, day] }
+                  series: { type: array, items: { $ref: '#/components/schemas/Group' } }
+  /api/v1/breakdown:
+    get:
+      summary: Totals grouped by model, virtual key, provider key, or API
+      parameters:
+        - { name: by, in: query, required: true, schema: { type: string, enum: [model, key, connection, endpoint, day, hour] } }
+        - { $ref: '#/components/parameters/range' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rows: { type: array, items: { $ref: '#/components/schemas/Group' } }
+  /api/v1/findings:
+    get:
+      summary: Findings by data type, action, and whether the action was applied
+      parameters: [{ $ref: '#/components/parameters/range' }]
+      responses:
+        '200': { description: OK }
+  /api/v1/budgets:
+    get:
+      summary: Each budget against its limits (OP-5) - the organization's and each active key's spend this month and today (UTC), reservations in flight included
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  on: { type: boolean }
+                  at_soft: { type: string, enum: [cheaper_tier, alert] }
+                  rate_limits: { type: object }
+                  rows:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        scope: { type: string, enum: [org, key] }
+                        name: { type: string }
+                        monthly_usd: { type: number }
+                        daily_usd: { type: number }
+                        limits: { type: object }
+                        state: { type: string, enum: [ok, soft, hard] }
+  /api/v1/routing:
+    get:
+      summary: The routing report (OP-4, shadow mode) by requested model, the cheaper model the router would use (empty when it stays), and the reason, with the requests' cost and the estimated saving
+      parameters: [{ $ref: '#/components/parameters/range' }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mode: { type: string, enum: [off, shadow] }
+                  rows:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        requested: { type: string }
+                        would: { type: string }
+                        reason: { type: string }
+                        requests: { type: integer }
+                        cost_usd: { type: number }
+                        saving_usd: { type: number }
+  /api/v1/nearmiss:
+    get:
+      summary: Exact-cache near misses per label, such as system:date, with the misses, keys, and cost they explain
+      parameters: [{ $ref: '#/components/parameters/range' }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rows:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        label: { type: string, description: 'field:kind, never a value' }
+                        requests: { type: integer }
+                        keys: { type: integer }
+                        cost_usd: { type: number }
+  /api/v1/security:
+    get:
+      summary: The security report (OB-3) per virtual key (main sources) and per time bucket (an hour up to 49 hours, else a day). Counts of requests only
+      parameters: [{ $ref: '#/components/parameters/range' }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  bucket: { type: string, enum: [hour, day] }
+                  sources: { type: array, items: { $ref: '#/components/schemas/SecurityRow' } }
+                  series: { type: array, items: { $ref: '#/components/schemas/SecurityRow' } }
+  /api/v1/admin/hierarchy:
+    get:
+      summary: Teams, projects, and virtual keys (never a key itself) (AC-4)
+      responses: { '200': { description: OK } }
+  /api/v1/admin/teams:
+    post:
+      summary: Create a team
+      requestBody: { content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string } } } } } }
+      responses: { '201': { description: Created }, '400': { description: Invalid name }, '409': { description: Exists } }
+  /api/v1/admin/teams/{name}:
+    delete:
+      summary: Delete a team that has no projects
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      responses: { '204': { description: Deleted }, '404': { description: No such team }, '409': { description: The team has projects } }
+  /api/v1/admin/projects:
+    post:
+      summary: Create a project, in a team or directly under the organization
+      requestBody: { content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string }, team: { type: string } } } } } }
+      responses: { '201': { description: Created }, '404': { description: No such team }, '409': { description: Exists } }
+  /api/v1/admin/projects/{name}:
+    delete:
+      summary: Delete a project that has no active keys
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      responses: { '204': { description: Deleted }, '404': { description: No such project }, '409': { description: The project has active keys } }
+  /api/v1/admin/keys:
+    post:
+      summary: Create a virtual key; the key is in the answer once and stored as a hash
+      requestBody: { content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string }, project: { type: string } } } } } }
+      responses: { '201': { description: 'Created: {key, id, name, project_id}' }, '409': { description: Exists } }
+  /api/v1/admin/keys/{name}/revoke:
+    post:
+      summary: Revoke a virtual key
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      responses: { '204': { description: Revoked }, '404': { description: No such active key } }
+  /api/v1/admin/keys/{name}/user-secret:
+    parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+    post:
+      summary: Create or replace the key's signing secret for application user tokens (AC-3); returned once, stored sealed
+      responses: { '201': { description: '{key, secret}' }, '404': { description: No such active key } }
+    delete:
+      summary: Remove the key's signing secret; its application tokens are refused
+      responses: { '204': { description: Removed }, '404': { description: No such active key } }
+  /api/v1/admin/keys/{name}/require-user:
+    put:
+      summary: Whether the key refuses requests without a valid user token (X-KyGate-User)
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { required: { type: boolean } } } } } }
+      responses: { '200': { description: '{key, require_user}' }, '404': { description: No such active key } }
+  /api/v1/users/pseudonym:
+    post:
+      summary: The pseudonym that stands for a person in reports (AC-3); the ID is neither stored nor recorded
+      requestBody: { content: { application/json: { schema: { type: object, required: [id], properties: { id: { type: string } } } } } }
+      responses: { '200': { description: '{user}' } }
+  /api/v1/admin/keys/{name}/project:
+    put:
+      summary: Move a key into a project; an empty project takes it out
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { project: { type: string } } } } } }
+      responses: { '204': { description: Moved }, '404': { description: No such key or project } }
+  /api/v1/admin/providers:
+    post:
+      summary: Store a provider key, sealed under the master key; it is never returned (AC-5)
+      requestBody: { content: { application/json: { schema: { type: object, required: [name, provider], properties: { name: { type: string }, provider: { type: string, enum: [openai, anthropic, local] }, base_url: { type: string }, region: { type: string, description: 'where the endpoint processes data, such as eu (GV-4)' }, key: { type: string, writeOnly: true } } } } } }
+      responses: { '201': { description: 'Stored: {name, provider, base_url}' }, '400': { description: Invalid } }
+  /api/v1/admin/providers/{name}:
+    delete:
+      summary: Delete a stored provider key
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      responses: { '204': { description: Deleted }, '404': { description: No such stored key } }
+  /api/v1/admin/providers/{name}/region:
+    put:
+      summary: Set or clear a stored connection's region (GV-4); admin and security. An environment connection's region comes from KYGATE_REGION_<NAME>
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { region: { type: string } } } } } }
+      responses: { '200': { description: 'Set: {name, region}' }, '400': { description: Not a region name }, '404': { description: No such stored key } }
+  /api/v1/admin/data:
+    get:
+      summary: Retention periods, the regions requests are pinned to, and each connection's region (GV-4); admin and security
+      responses: { '200': { description: OK } }
+  /api/v1/admin/purge/events:
+    post:
+      summary: Delete events, or only their captured payloads, by key, team, project, and time (GV-4); admin and security. Recorded in the audit trail
+      requestBody: { content: { application/json: { schema: { type: object, properties: {
+        key: { type: string, description: name or ID }, team: { type: string }, project: { type: string },
+        user: { type: string, description: "a person's ID, or their pseudonym (u_...)" },
+        from: { type: string, format: date-time }, to: { type: string, format: date-time, description: exclusive },
+        payloads_only: { type: boolean }, dry_run: { type: boolean, description: count without deleting } } } } } }
+      responses: { '200': { description: '{matched, deleted}' }, '400': { description: 'Names nothing, or an unknown key' } }
+  /api/v1/admin/purge/cache:
+    post:
+      summary: Delete exact and semantic cache entries of one key, with one tag, or all of them, in every KyGate process (GV-4); admin and security
+      requestBody: { content: { application/json: { schema: { type: object, properties: { key: { type: string }, tag: { type: string }, all: { type: boolean } } } } } }
+      responses: { '200': { description: '{exact, semantic}: entries deleted from the stores by this process' }, '400': { description: Name exactly one of key, tag, or all } }
+  /api/v1/admin/audit:
+    get:
+      summary: "Enterprise edition: The audit ledger's head, the rows waiting to be sealed, the last verification, and each SIEM destination's state (GV-3); admin and security"
+      responses: { '200': { description: OK } }
+  /api/v1/admin/audit/verify:
+    post:
+      summary: "Enterprise edition: Verify the whole audit ledger (chain, altered, missing, forged, unrecorded rows); the result is recorded in the trail"
+      responses: { '200': { description: The report }, '409': { description: A verification is already running } }
+  /api/v1/admin/policies:
+    get:
+      summary: The policy files in force - org, and team-NAME, project-NAME, key-NAME (GV-1)
+      responses: { '200': { description: OK } }
+  /api/v1/admin/policies/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: string, description: 'org, team-NAME, project-NAME, or key-NAME' } }]
+    get:
+      summary: A policy file, as YAML
+      responses: { '200': { description: OK, content: { application/yaml: {} } }, '404': { description: No such file } }
+    put:
+      summary: Write a policy file; it is validated (merged with the organization's for a level file), and the previous version is kept as .bak
+      requestBody: { content: { application/yaml: {} } }
+      responses: { '200': { description: 'Written: {id, path, warnings}' }, '422': { description: The file would not load } }
+    delete:
+      summary: Delete a level file (kept as .bak); the organization's cannot be deleted
+      responses: { '204': { description: Deleted }, '404': { description: No such file } }
+  /api/v1/admin/log:
+    get:
+      summary: The audit trail of administration (GV-3) - who, what, when; never a secret
+      responses: { '200': { description: OK } }
+  /api/v1/admin/users:
+    get:
+      summary: "Enterprise edition: People who may sign in, with their role (admin)"
+      description: >-
+        rows is KyGate's users list. provisioned lists the people the identity provider manages through SCIM -
+        email, active, groups, the role and team their groups map to in sso.yaml, listed (also on the users list,
+        whose role comes first), updated. scim says whether a SCIM token is set.
+      responses: { '200': { description: '{rows, provisioned, scim}' } }
+  /api/v1/admin/users/{email}:
+    parameters: [{ name: email, in: path, required: true, schema: { type: string } }]
+    put:
+      summary: "Enterprise edition: Add a person or change their role (admin); their sessions end"
+      requestBody: { content: { application/json: { schema: { type: object, required: [role], properties: { role: { type: string, enum: [admin, security, finance, team_lead, viewer] }, team: { type: string, description: the team of a team_lead } } } } } }
+      responses: { '200': { description: OK }, '400': { description: Invalid } }
+    delete:
+      summary: "Enterprise edition: Remove a person (admin); their sessions end"
+      responses: { '204': { description: Removed }, '404': { description: No such person } }
+  /api/v1/quality:
+    get:
+      summary: Answer quality (OB-4) - applications' ratings, by how each answer was served
+      parameters: [{ name: range, in: query, schema: { type: string, enum: [24h, 7d, 30d, 90d] } }]
+      description: >-
+        rows - served (exact, semantic, model), model, routable (the router would have sent it to a cheaper model),
+        rating (bad, good), reason, count; only ratings sent by the key that made the request. semantic - hits,
+        would_hit, agree, disagree (shadow comparisons). Ratings come from POST /kygate/v1/feedback on the model API.
+        A team lead sees their team's.
+      responses: { '200': { description: '{rows, semantic, cache_hits, requests}' } }
+  /api/v1/fleet:
+    get:
+      summary: Every KyGate process heard from in the last day, from heartbeats; not for team leads
+      description: >-
+        rows - id, role (all, gateway, control), host, version, started, seen, status (up, or silent after silent_after_s
+        seconds), and state - the process's own view - gateway, control, profile, in_flight, spool (bytes, dropped,
+        last_delivery, last_error, last_error_at), guard (state, version, calls, failures, avg_ms, last_error), counters
+        (memory or valkey), counters_degraded, rates_fallbacks, cache, cache_errors, providers (name, provider, state,
+        last_status, requests, failures). No key, value, text, or provider address.
+      responses: { '200': { description: '{now, silent_after_s, rows}' }, '403': { description: A team lead } }
+  /scim/v2/{resource}:
+    parameters: [{ name: resource, in: path, required: true, schema: { type: string, enum: [Users, Groups, ServiceProviderConfig, ResourceTypes, Schemas] } }]
+    description: >-
+      SCIM 2.0 provisioning (RFC 7643, RFC 7644; GV-2) for the company's identity provider: Users and Groups with
+      GET (filter by equality, joined by 'and': userName, externalId, id, active; displayName, externalId, id,
+      members[value eq "..."]; startIndex, count up to 200; excludedAttributes=members), POST, GET/PUT/PATCH/DELETE
+      on /{resource}/{id}. No bulk, sort, or ETags. Bearer token from 'kygate scim token' only: neither the admin
+      token nor a session works here. Off (404) until a token exists. Errors use the SCIM error schema.
+    get:
+      summary: "Enterprise edition: List or discover (SCIM)"
+      security: [{ scimToken: [] }]
+      responses: { '200': { description: A SCIM ListResponse or discovery document }, '401': { description: Token not accepted }, '404': { description: SCIM is off } }
+    post:
+      summary: "Enterprise edition: Create a user or group (SCIM)"
+      security: [{ scimToken: [] }]
+      responses: { '201': { description: Created }, '400': { description: Invalid, such as a userName that is not an email }, '409': { description: The name is taken } }
+  /auth/config:
+    get:
+      summary: The ways to sign in - single sign-on when sso.yaml is set up, and the admin token
+      security: []
+      responses: { '200': { description: '{sso, sso_name}' } }
+  /auth/me:
+    get:
+      summary: Who is signed in - actor, role, team, and the CSRF value to send with changes
+      responses: { '200': { description: OK }, '401': { description: Not signed in } }
+  /auth/token:
+    post:
+      summary: Sign in to the console with the admin token (recorded as break-glass when single sign-on is set up)
+      security: []
+      requestBody: { content: { application/json: { schema: { type: object, properties: { token: { type: string } } } } } }
+      responses: { '200': { description: Signed in; sets the session cookie }, '401': { description: Not accepted } }
+  /auth/login:
+    get:
+      summary: "Enterprise edition: Start a single sign-on (redirects to the identity provider, with PKCE, state, and nonce)"
+      security: []
+      responses: { '302': { description: To the identity provider } }
+  /auth/callback:
+    get:
+      summary: "Enterprise edition: Finish a single sign-on (the identity provider redirects here)"
+      security: []
+      responses: { '302': { description: Signed in }, '403': { description: Not allowed to use this console } }
+  /auth/logout:
+    post:
+      summary: End the session
+      responses: { '204': { description: Signed out } }
+  /api/v1/requests:
+    get:
+      summary: Recent requests, newest first, as metadata
+      parameters:
+        - { $ref: '#/components/parameters/range' }
+        - { name: outcome, in: query, schema: { type: string } }
+        - { name: cache, in: query, schema: { type: string } }
+        - { name: key, in: query, schema: { type: string } }
+        - { name: model, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, maximum: 500, default: 100 } }
+        - { name: before, in: query, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rows: { type: array, items: { $ref: '#/components/schemas/Event' } }
+  /api/v1/requests/{id}:
+    get:
+      summary: One request, with its masked payload when the policy captures payloads
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK }
+        '404': { description: No such request }
+  /api/v1/connections:
+    get:
+      summary: State of each provider key and local model server. Keys are never returned.
+      responses:
+        '200': { description: OK }
+  /api/v1/keys:
+    get:
+      summary: Virtual keys, as metadata (name, ID, prefix, state). Secrets are never returned.
+      responses:
+        '200': { description: OK }
+  /metrics:
+    get:
+      summary: Prometheus metrics. No authentication; no text content.
+      security: []
+      responses:
+        '200': { description: OK }

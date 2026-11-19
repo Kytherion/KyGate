@@ -1,0 +1,144 @@
+{{- $name := printf "%s-gateway" (include "kygate.fullname" .) -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels: {{- include "kygate.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  {{- if not .Values.gateway.autoscaling.enabled }}
+  replicas: {{ .Values.gateway.replicas }}
+  {{- end }}
+  selector:
+    matchLabels: {{- include "kygate.selector" (dict "root" . "component" "gateway") | nindent 6 }}
+  strategy:
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  template:
+    metadata:
+      labels: {{- include "kygate.selector" (dict "root" . "component" "gateway") | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "kygate.serviceAccount" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {{- include "kygate.podSecurity" . | nindent 8 }}
+      terminationGracePeriodSeconds: {{ .Values.gateway.terminationGracePeriodSeconds }}
+      {{- if .Values.gateway.topologySpread }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: {{- include "kygate.selector" (dict "root" . "component" "gateway") | nindent 14 }}
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: {{- include "kygate.selector" (dict "root" . "component" "gateway") | nindent 14 }}
+      {{- end }}
+      containers:
+        - name: gateway
+          image: {{ include "kygate.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: [serve]
+          env: {{- include "kygate.env" (dict "root" . "role" "gateway") | nindent 12 }}
+          envFrom: {{- include "kygate.envFrom" (dict "root" .) | nindent 12 }}
+          ports:
+            - { name: api, containerPort: 4000 }
+          # Starting may wait for PostgreSQL and for the control process to set
+          # the installation up (two minutes): liveness waits until then.
+          startupProbe:
+            httpGet: { path: /healthz, port: api }
+            periodSeconds: 5
+            failureThreshold: 48
+          readinessProbe:
+            httpGet: { path: /readyz, port: api }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: api }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources: {{- toYaml .Values.gateway.resources | nindent 12 }}
+          securityContext: {{- include "kygate.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            # The event spool: events reach it before delivery; a stopping pod delivers what is left.
+            - { name: data, mountPath: /data }
+            - { name: tmp, mountPath: /tmp }
+            {{- include "kygate.guardTLSMount" . | nindent 12 }}
+      volumes:
+        - { name: data, emptyDir: {} }
+        - { name: tmp, emptyDir: {} }
+        {{- include "kygate.guardTLSVolume" . | nindent 8 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels: {{- include "kygate.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.gateway.service.type }}
+  selector: {{- include "kygate.selector" (dict "root" . "component" "gateway") | nindent 4 }}
+  ports:
+    - { name: api, port: {{ .Values.gateway.service.port }}, targetPort: api }
+{{- if .Values.gateway.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $name }}
+  labels: {{- include "kygate.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: {{ $name }} }
+  minReplicas: {{ .Values.gateway.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.gateway.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: {{ .Values.gateway.autoscaling.targetCPUUtilizationPercentage }} } }
+{{- end }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}
+  labels: {{- include "kygate.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.gateway.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels: {{- include "kygate.selector" (dict "root" . "component" "gateway") | nindent 6 }}
+{{- if .Values.gateway.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $name }}
+  labels: {{- include "kygate.labels" . | nindent 4 }}
+  {{- with .Values.gateway.ingress.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.gateway.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.gateway.ingress.tls }}
+  tls: {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ required "gateway.ingress.host" .Values.gateway.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: {{ $name }}, port: { name: api } } }
+{{- end }}

@@ -1,0 +1,44 @@
+# Internal planning notes: roadmap, decisions log, reviews, drafts. Kept locally, never pushed
+docs/internal/
+CLAUDE.md
+
+# KyGate Enterprise: sources built with -tags enterprise. They live in the
+# private repository (.git-ee), never in this public one.
+*_ee.go
+*_ee_test.go
+.git-ee/
+LICENSE.enterprise
+ee-git.ps1
+ee-git.sh
+
+# Build output
+/kygate
+/kygate.exe
+/bin/
+/dist/
+*~
+*.exe~
+
+# Python packaging output
+*.egg-info/
+build/
+
+# Local data directories: they hold the master key, key hashes, and events
+.kygate/
+kygate-data/
+*.db
+*.db-shm
+*.db-wal
+master.key
+
+# Environment files may hold provider keys
+.env
+.env.*
+!.env.example
+
+# Tooling
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+coverage.out

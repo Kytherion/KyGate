@@ -1,0 +1,42 @@
+KyGate Guard
+Copyright the KyGate contributors. Licensed under the Apache License 2.0.
+
+This software uses the following third-party components.
+
+Python packages
+  grpcio, grpcio-tools ............ Apache-2.0
+  protobuf ........................ BSD-3-Clause
+  With the optional [ml] extra:
+  onnxruntime ..................... MIT
+  tokenizers ...................... Apache-2.0
+  numpy ........................... BSD-3-Clause
+
+Model pack "personal-data" (downloaded only by 'kygate-guard models pull personal-data')
+  Model: bardsai/eu-pii-anonimization-multilang-v3, by bards.ai, Apache-2.0
+    https://huggingface.co/bardsai/eu-pii-anonimization-multilang-v3
+    revision 091984b5fbce4c161abc4776ed0f4e3206e1b374, file onnx/model_quantized.onnx
+  Base model: jhu-clsp/mmBERT-base, MIT
+  Training data, as stated by the model's authors:
+    ai4privacy/pii-masking-openpii-1m, by Ai4Privacy ........ CC-BY-4.0
+    nvidia/Nemotron-PII, by NVIDIA .......................... CC-BY-4.0
+    dglover1/mapa-eur-lex ................................... CC-BY-4.0
+    gretelai/gretel-pii-masking-en-v1, by Gretel ............ Apache-2.0
+    piimb/privy ............................................. MIT
+    HuggingFaceFW/fineweb and fineweb-2 text ................ ODC-By
+      labelled with Qwen3-30B-A3B-Instruct .................. Apache-2.0
+    synthetic documents from an Apache-2.0 open-weight model
+  These licenses are as stated on the model and dataset pages; the model
+  repositories hold no LICENSE file. The model is a detection model, not a
+  compliance program.
+
+Model pack "prompt-injection" (downloaded only by 'kygate-guard models pull prompt-injection')
+  Model: patronus-studio/wolf-defender-prompt-injection-small, by Patronus AI, Apache-2.0
+    https://huggingface.co/patronus-studio/wolf-defender-prompt-injection-small
+    revision 2484cc9a13550aa4f2c29b577ff3ef331dc6ba07, file onnx/onnx_fp16/model_fp16.onnx
+    The repository holds a LICENSE file (Apache-2.0).
+  Base model: jhu-clsp/mmBERT-small, MIT
+  Training data: not named on the model's card ("public-source and internally
+    developed examples"), so its licenses cannot be listed here.
+  Its scores are published by its authors, for English and German. KyGate
+  measures it on its own English and French corpus (eval/detection). A
+  classifier lowers the risk of prompt injection; it does not remove it.

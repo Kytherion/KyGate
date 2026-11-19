@@ -1,0 +1,161 @@
+{{- if .Values.guard.enabled }}
+{{- $name := include "kygate.guardService" . -}}
+{{- if and .Values.guard.tls.enabled .Values.guard.tls.generate (not .Values.guard.tls.existingSecret) }}
+{{- /* A CA and certificates for mutual TLS, made once and kept across upgrades. */}}
+{{- $secretName := include "kygate.guardTLSSecret" . }}
+{{- $existing := lookup "v1" "Secret" .Release.Namespace $secretName }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $secretName }}
+  labels: {{- include "kygate.labels" . | nindent 4 }}
+  annotations: { helm.sh/resource-policy: keep }
+type: Opaque
+data:
+{{- if $existing }}
+{{- toYaml $existing.data | nindent 2 }}
+{{- else }}
+{{- $ns := .Release.Namespace }}
+{{- $ca := genCA "kygate-guard-ca" 3650 }}
+{{- $alt := list $name (printf "%s.%s" $name $ns) (printf "%s.%s.svc" $name $ns) (printf "%s.%s.svc.cluster.local" $name $ns) }}
+{{- $server := genSignedCert $name nil $alt 3650 $ca }}
+{{- $client := genSignedCert "kygate-gateway" nil nil 3650 $ca }}
+  ca.crt: {{ $ca.Cert | b64enc }}
+  tls.crt: {{ $server.Cert | b64enc }}
+  tls.key: {{ $server.Key | b64enc }}
+  client.crt: {{ $client.Cert | b64enc }}
+  client.key: {{ $client.Key | b64enc }}
+{{- end }}
+---
+{{- end }}
+{{- if .Values.guard.recognizers }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  labels: {{- include "kygate.labels" . | nindent 4 }}
+data:
+  recognizers.json: {{- toYaml .Values.guard.recognizers | nindent 4 }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels: {{- include "kygate.labels" . | nindent 4 }}
+    app.kubernetes.io/component: guard
+spec:
+  {{- if not .Values.guard.autoscaling.enabled }}
+  replicas: {{ .Values.guard.replicas }}
+  {{- end }}
+  selector:
+    matchLabels: {{- include "kygate.selector" (dict "root" . "component" "guard") | nindent 6 }}
+  strategy:
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  template:
+    metadata:
+      labels: {{- include "kygate.selector" (dict "root" . "component" "guard") | nindent 8 }}
+      annotations:
+        checksum/recognizers: {{ .Values.guard.recognizers | toString | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "kygate.serviceAccount" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {{- include "kygate.guardPodSecurity" . | nindent 8 }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: {{- include "kygate.selector" (dict "root" . "component" "guard") | nindent 14 }}
+      containers:
+        - name: guard
+          image: {{ .Values.guard.image.repository }}:{{ default .Chart.AppVersion .Values.guard.image.tag }}
+          imagePullPolicy: {{ .Values.guard.image.pullPolicy }}
+          args:
+            {{- if .Values.guard.recognizers }}
+            - --recognizers=/etc/kygate-guard/recognizers.json
+            {{- end }}
+          env:
+            - { name: HOME, value: /tmp }
+            {{- if .Values.guard.tls.enabled }}
+            - { name: KYGATE_GUARD_TLS_CERT, value: /etc/kygate/guard-tls/tls.crt }
+            - { name: KYGATE_GUARD_TLS_KEY, value: /etc/kygate/guard-tls/tls.key }
+            - { name: KYGATE_GUARD_TLS_CLIENT_CA, value: /etc/kygate/guard-tls/ca.crt }
+            {{- end }}
+          ports:
+            - { name: grpc, containerPort: 4002 }
+          readinessProbe:
+            tcpSocket: { port: grpc }
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: { port: grpc }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources: {{- toYaml .Values.guard.resources | nindent 12 }}
+          securityContext: {{- include "kygate.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: models, mountPath: /models, readOnly: true }
+            {{- if .Values.guard.recognizers }}
+            - { name: recognizers, mountPath: /etc/kygate-guard, readOnly: true }
+            {{- end }}
+            {{- if .Values.guard.tls.enabled }}
+            - { name: guard-tls, mountPath: /etc/kygate/guard-tls, readOnly: true }
+            {{- end }}
+      volumes:
+        - { name: tmp, emptyDir: {} }
+        {{- if .Values.guard.models.existingClaim }}
+        - { name: models, persistentVolumeClaim: { claimName: {{ .Values.guard.models.existingClaim }}, readOnly: true } }
+        {{- else }}
+        - { name: models, emptyDir: {} }
+        {{- end }}
+        {{- if .Values.guard.recognizers }}
+        - { name: recognizers, configMap: { name: {{ $name }} } }
+        {{- end }}
+        {{- if .Values.guard.tls.enabled }}
+        - name: guard-tls
+          secret: { secretName: {{ include "kygate.guardTLSSecret" . }}, defaultMode: 0400 }
+        {{- end }}
+---
+# Headless: the gateways resolve every Guard pod and spread each call over
+# them (gRPC round robin). A normal service would send a connection's every
+# call to one pod.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels: {{- include "kygate.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector: {{- include "kygate.selector" (dict "root" . "component" "guard") | nindent 4 }}
+  ports:
+    - { name: grpc, port: 4002, targetPort: grpc }
+{{- if .Values.guard.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $name }}
+  labels: {{- include "kygate.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: {{ $name }} }
+  minReplicas: {{ .Values.guard.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.guard.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: {{ .Values.guard.autoscaling.targetCPUUtilizationPercentage }} } }
+{{- end }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}
+  labels: {{- include "kygate.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.guard.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels: {{- include "kygate.selector" (dict "root" . "component" "guard") | nindent 6 }}
+{{- end }}

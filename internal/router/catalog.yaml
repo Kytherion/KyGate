@@ -1,0 +1,45 @@
+# KyGate built-in model catalog.
+#
+# Prices are US dollars per million tokens, as published by each provider when
+# this KyGate version was built. Prices change: check them, and override or
+# extend this list with a catalog file (KYGATE_CATALOG, or catalog.yaml in the
+# data directory). A model that is not listed is still served; its cost is
+# reported as unpriced.
+#
+# A request's model is matched to the longest id that it starts with, so
+# "gpt-4o-mini-2024-07-18" is priced as gpt-4o-mini.
+#
+# kind is chat (the default) or embedding: only chat models are routing targets.
+#
+# cache_write is the price of writing the provider's prompt cache (Anthropic,
+# 5-minute cache: 1.25 x input). cached_input is the price of a cache read.
+
+models:
+  # Anthropic
+  - { id: claude-fable-5-2,  family: anthropic, tier: frontier, context: 1000000, price: { input: 8.00,  output: 40.00, cached_input: 0.20, cache_write: 10.00 } }
+  - { id: claude-fable-5-1,  family: anthropic, tier: frontier, context: 1000000, price: { input: 10.00, output: 50.00, cached_input: 1.00, cache_write: 12.50 } }
+  - { id: claude-fable-5,    family: anthropic, tier: frontier, context: 1000000, price: { input: 10.00, output: 50.00, cached_input: 1.00, cache_write: 12.50 } }
+  - { id: claude-opus-5-5,   family: anthropic, tier: frontier, context: 1000000, price: { input: 4.00,  output: 20.00, cached_input: 0.20, cache_write: 5.00 } }
+  - { id: claude-opus-5,     family: anthropic, tier: frontier, context: 1000000, price: { input: 5.00,  output: 25.00, cached_input: 0.50, cache_write: 6.25 } }
+  - { id: claude-opus-4-8,   family: anthropic, tier: frontier, context: 1000000, price: { input: 5.00,  output: 25.00, cached_input: 0.50, cache_write: 6.25 } }
+  - { id: claude-opus-4-7,   family: anthropic, tier: frontier, context: 1000000, price: { input: 5.00,  output: 25.00, cached_input: 0.50, cache_write: 6.25 } }
+  - { id: claude-opus-4-6,   family: anthropic, tier: frontier, context: 1000000, price: { input: 5.00,  output: 25.00, cached_input: 0.50, cache_write: 6.25 } }
+  - { id: claude-sonnet-5-5, family: anthropic, tier: standard, context: 1000000, price: { input: 2.00,  output: 10.00, cached_input: 0.10, cache_write: 2.50 } }
+  - { id: claude-sonnet-5,   family: anthropic, tier: standard, context: 1000000, price: { input: 2.00,  output: 10.00, cached_input: 0.20, cache_write: 2.50 } }
+  - { id: claude-sonnet-4-6, family: anthropic, tier: standard, context: 1000000, price: { input: 3.00,  output: 15.00, cached_input: 0.30, cache_write: 3.75 } }
+  - { id: claude-haiku-5-5,  family: anthropic, tier: economy,  context: 1000000, price: { input: 0.10,  output: 0.50,  cached_input: 0.01, cache_write: 0.125 } }
+  - { id: claude-haiku-4-5,  family: anthropic, tier: economy,  context: 200000,  price: { input: 1.00,  output: 5.00,  cached_input: 0.10, cache_write: 1.25 } }
+
+  # OpenAI
+  - { id: gpt-5,            family: openai, tier: frontier, price: { input: 1.25, output: 10.00, cached_input: 0.125 } }
+  - { id: gpt-5-mini,       family: openai, tier: economy,  price: { input: 0.25, output: 2.00,  cached_input: 0.025 } }
+  - { id: gpt-5-nano,       family: openai, tier: economy,  price: { input: 0.05, output: 0.40,  cached_input: 0.005 } }
+  - { id: gpt-4.1,          family: openai, tier: standard, price: { input: 2.00, output: 8.00,  cached_input: 0.50 } }
+  - { id: gpt-4.1-mini,     family: openai, tier: economy,  price: { input: 0.40, output: 1.60,  cached_input: 0.10 } }
+  - { id: gpt-4.1-nano,     family: openai, tier: economy,  price: { input: 0.10, output: 0.40,  cached_input: 0.025 } }
+  - { id: gpt-4o,           family: openai, tier: standard, price: { input: 2.50, output: 10.00, cached_input: 1.25 } }
+  - { id: gpt-4o-mini,      family: openai, tier: economy,  price: { input: 0.15, output: 0.60,  cached_input: 0.075 } }
+  - { id: o3,               family: openai, tier: frontier, price: { input: 2.00, output: 8.00,  cached_input: 0.50 } }
+  - { id: o4-mini,          family: openai, tier: standard, price: { input: 1.10, output: 4.40,  cached_input: 0.275 } }
+  - { id: text-embedding-3-small, family: openai, tier: economy, kind: embedding, price: { input: 0.02, output: 0 } }
+  - { id: text-embedding-3-large, family: openai, tier: economy, kind: embedding, price: { input: 0.13, output: 0 } }

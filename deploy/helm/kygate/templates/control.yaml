@@ -1,0 +1,124 @@
+{{- $name := printf "%s-control" (include "kygate.fullname" .) -}}
+{{- if or .Values.control.ssoConfig .Values.control.siemConfig }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  labels: {{- include "kygate.labels" . | nindent 4 }}
+data:
+  {{- with .Values.control.ssoConfig }}
+  sso.yaml: {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.control.siemConfig }}
+  siem.yaml: {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels: {{- include "kygate.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control
+spec:
+  # One control process: it seals the audit ledger, applies retention, and
+  # serves the console. A new version replaces the old one, never beside it.
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: {{- include "kygate.selector" (dict "root" . "component" "control") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "kygate.selector" (dict "root" . "component" "control") | nindent 8 }}
+      annotations:
+        checksum/config: {{ printf "%s%s" .Values.control.ssoConfig .Values.control.siemConfig | sha256sum }}
+        {{- with .Values.podAnnotations }}{{ toYaml . | nindent 8 }}{{- end }}
+    spec:
+      serviceAccountName: {{ include "kygate.serviceAccount" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {{- include "kygate.podSecurity" . | nindent 8 }}
+      containers:
+        - name: control
+          image: {{ include "kygate.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: [serve]
+          env: {{- include "kygate.env" (dict "root" . "role" "control") | nindent 12 }}
+          envFrom: {{- include "kygate.envFrom" (dict "root" .) | nindent 12 }}
+          ports:
+            - { name: console, containerPort: 4001 }
+          # Starting may wait for PostgreSQL (a minute) and the key-management
+          # service: liveness waits until the console answers once.
+          startupProbe:
+            httpGet: { path: /healthz, port: console }
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet: { path: /healthz, port: console }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: console }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources: {{- toYaml .Values.control.resources | nindent 12 }}
+          securityContext: {{- include "kygate.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: tmp, mountPath: /tmp }
+            {{- if .Values.control.ssoConfig }}
+            - { name: config, mountPath: /data/sso.yaml, subPath: sso.yaml, readOnly: true }
+            {{- end }}
+            {{- if .Values.control.siemConfig }}
+            - { name: config, mountPath: /data/siem.yaml, subPath: siem.yaml, readOnly: true }
+            {{- end }}
+            {{- include "kygate.guardTLSMount" . | nindent 12 }}
+      volumes:
+        - { name: data, emptyDir: {} }
+        - { name: tmp, emptyDir: {} }
+        {{- if or .Values.control.ssoConfig .Values.control.siemConfig }}
+        - { name: config, configMap: { name: {{ $name }} } }
+        {{- end }}
+        {{- include "kygate.guardTLSVolume" . | nindent 8 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels: {{- include "kygate.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.control.service.type }}
+  selector: {{- include "kygate.selector" (dict "root" . "component" "control") | nindent 4 }}
+  ports:
+    - { name: console, port: {{ .Values.control.service.port }}, targetPort: console }
+{{- if .Values.control.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $name }}
+  labels: {{- include "kygate.labels" . | nindent 4 }}
+  {{- with .Values.control.ingress.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.control.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.control.ingress.tls }}
+  tls: {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    - host: {{ required "control.ingress.host" .Values.control.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: {{ $name }}, port: { name: console } } }
+{{- end }}

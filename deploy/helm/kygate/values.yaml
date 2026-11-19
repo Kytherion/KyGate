@@ -1,0 +1,144 @@
+# KyGate on Kubernetes. See docs/deployment.md, "Kubernetes with Helm".
+#
+# Production points at your own PostgreSQL and Valkey (two instances: one for
+# counters, never evicting; one for the cache) through Secrets. dev.enabled
+# adds single-instance ones in the cluster, for trying KyGate only.
+
+image:
+  repository: kygate
+  tag: ""                 # default: the chart's appVersion
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# ---- secrets: always from Secrets you create, never in this file ----
+
+# The master key. One of:
+#   wrapped: a Secret holding KYGATE_MASTER_KEY_WRAPPED, made with
+#            'kygate master-key new --kms URI' (recommended: the key never
+#            exists outside memory), plus kms.* below for the service's access;
+#   plain:   a Secret holding KYGATE_MASTER_KEY (32 bytes, base64).
+masterKey:
+  existingSecret: ""      # the Secret's name
+  secretKey: ""           # its key: KYGATE_MASTER_KEY_WRAPPED or KYGATE_MASTER_KEY
+
+# Access to the key-management service that unwraps the master key.
+kms:
+  # Vault: the address, and environment for the login the key URI names
+  # (auth=kubernetes uses the pod's service account; nothing to store).
+  vaultAddr: ""
+  vaultNamespace: ""
+  # Any other variables the service's client reads (AWS_REGION, Azure and
+  # Google workload identity settings ...), and Secrets to load them from.
+  env: {}
+  envFromSecrets: []
+
+# PostgreSQL and Valkey: a Secret with KYGATE_DATABASE_URL, KYGATE_COUNTERS_URL,
+# and KYGATE_CACHE_URL. Ignored when dev.enabled is true.
+stores:
+  existingSecret: ""
+
+# Provider keys (OPENAI_API_KEY, ANTHROPIC_API_KEY, ...) from Secrets, and
+# other variables. Keys can also be stored, sealed, from the console.
+providers:
+  envFromSecrets: []
+extraEnv: {}
+
+serviceAccount:
+  create: true
+  name: ""                # default: the release's full name
+  annotations: {}         # e.g. eks.amazonaws.com/role-arn, iam.gke.io/gcp-service-account
+
+# ---- the gateways: the model API ----
+gateway:
+  replicas: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { memory: 1Gi }
+  podDisruptionBudget: { minAvailable: 1 }
+  # Spread over zones, then nodes, when the cluster has several.
+  topologySpread: true
+  # Open streams get this long to finish when a pod stops.
+  terminationGracePeriodSeconds: 45
+  service:
+    type: ClusterIP
+    port: 4000
+  ingress:
+    enabled: false
+    className: ""
+    host: ""
+    tls: []               # [{ secretName: ..., hosts: [...] }]
+    # Streaming answers need buffering off at the proxy (nginx shown).
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-buffering: "off"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+      nginx.ingress.kubernetes.io/proxy-body-size: "16m"
+
+# ---- the control process: console, admin API, setup, retention, audit ledger ----
+# Always one replica: it is the audit ledger's one writer.
+control:
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { memory: 512Mi }
+  service:
+    type: ClusterIP
+    port: 4001
+  ingress:
+    enabled: false
+    className: ""
+    host: ""
+    tls: []
+    annotations: {}
+  # Files of the control process's data directory, as YAML text.
+  ssoConfig: ""           # sso.yaml (the client secret comes from an environment variable it names)
+  siemConfig: ""          # siem.yaml (tokens come from environment variables)
+
+# ---- the Guard: ML detection, optional ----
+guard:
+  enabled: false
+  image:
+    repository: kygate-guard
+    tag: ""
+    pullPolicy: IfNotPresent
+  replicas: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+  resources:
+    requests: { cpu: 500m, memory: 512Mi }
+    limits: { memory: 2Gi }
+  podDisruptionBudget: { minAvailable: 1 }
+  # Mutual TLS between the gateways and the Guard. generate: the chart makes a
+  # CA and certificates on install, kept across upgrades. Or name a Secret
+  # with ca.crt, tls.crt, tls.key (the Guard's, for the service's DNS names)
+  # and client.crt, client.key (the gateways'), from cert-manager for example.
+  tls:
+    enabled: true
+    generate: true
+    existingSecret: ""
+  # Recognizers (JSON text) for the base level; model packs from a volume
+  # where 'kygate-guard models pull' put them. Nothing is downloaded at start.
+  recognizers: ""
+  models:
+    existingClaim: ""
+  timeout: 5s
+
+# ---- for trying KyGate only: single-instance stores and a generated master key ----
+dev:
+  enabled: false
+  postgres:
+    image: postgres:17-alpine
+  valkey:
+    image: valkey/valkey:8-alpine
+    cacheMemory: 256mb
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}

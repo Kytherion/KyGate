@@ -1,0 +1,153 @@
+# KyGate starter policy, written at the first start.
+#
+# It enforces only what the fast detectors find with high precision, turns the
+# exact cache on and keeps answers on disk for 30 days, and allows everything
+# else, so that a first run protects and saves without breaking prompts.
+# Edit this file freely: KyGate reloads it within a few seconds, and an invalid
+# edit keeps the last good version in force. Editing a comment, a TTL, or a size
+# keeps the stored answers; changing a data rule or the mode starts a new cache.
+#
+# Every choice below is written out. There are no hidden defaults.
+
+kind: Policy
+scope: org
+
+# enforce: apply the actions below.
+# monitor: record what the actions would have done, and change nothing.
+mode: enforce
+
+data:
+  # One action per data type: allow | mask | redact | block | local_only | alert
+  #   mask       - reversible: the model sees [CREDIT_CARD_1], your answer gets the real value back
+  #   redact     - permanent: the value is removed and never put back
+  #   local_only - only a local model server may receive it; a request aimed at an
+  #                external provider is refused
+  #   alert      - allowed, and flagged in the console
+  entities:
+    SECRET:      { action: block }   # API keys, tokens, private keys
+    CREDIT_CARD: { action: mask }    # payment card numbers that pass the Luhn check
+    IBAN:        { action: mask }    # bank account numbers that pass the mod-97 check
+    EMAIL:       { action: allow }   # counted in the console, sent unchanged
+
+  # Company dictionaries. Uncomment, then reference them in entities as dict/<name>.
+  # dictionaries:
+  #   project-codenames:
+  #     terms: [Apollo, Hyperion]
+  #     case_sensitive: false
+  # and under entities:
+  #   dict/project-codenames: { action: local_only }
+
+  # Images, files, and audio: KyGate cannot read them yet, so it cannot check them.
+  # block | local_only | allow. The starter keeps them local: with no local model
+  # server, a request that carries one is refused. Set "allow" to send them out unchecked.
+  unreadable_content: local_only
+
+  # Embedding requests are never masked, because masking changes the vectors.
+  # When one contains a type whose action is mask or redact: block | local_only | allow
+  embeddings: block
+
+  # Region pinning: send requests only to provider connections in these regions.
+  # Give each connection its region with KYGATE_REGION_<NAME> (KYGATE_REGION_OPENAI=us),
+  # 'kygate provider add --region', or the console. A connection without a region is
+  # not used, and a request with no connection left is refused.
+  # regions: [eu]
+
+# Output inspection: what KyGate checks in each answer before you get it.
+# It runs inside KyGate, with no Guard. One action per check:
+#   alert  - flagged in the console, the answer is unchanged
+#   remove - the bad part is replaced with a short note; the rest of the answer arrives
+#   block  - the whole answer is refused (a stream stops with an error)
+#   allow  - not checked
+output:
+  secrets:        { action: remove }   # API keys, tokens, private keys that the model writes
+  images:         { action: remove }   # images from a site you did not name: they load by themselves and can carry data out
+  protected_urls: { action: remove }   # images or links whose address carries a masked value, such as ?card=[CREDIT_CARD_1]
+  links:          { action: alert }    # links to a site you did not name: they need a click, and most are harmless
+  # Sites that count as known, with their subdomains. Sites named in your own
+  # messages or the system prompt are known for that request.
+  allowed_domains: []
+
+cache:
+  # Anthropic bills a repeated prompt beginning at about a tenth of the price, but
+  # only up to a cache marker. For requests that carry none, KyGate adds them:
+  # off | instructions (system prompt and tools) | conversation (also the latest
+  # message, so the next turn reads the conversation from the provider's cache).
+  provider_markers: conversation
+
+  exact:
+    enabled: true
+    scope: org            # org: shared by every key | key: each virtual key has its own
+    ttl: 30d              # how long a stored answer is served, counted from when it was stored
+    max_size_mb: 256      # memory budget of the in-process cache
+    # A "regenerate" rule: the same key repeating the same request within this
+    # window gets a fresh, paid answer. 0s switches it off, so every repeat is
+    # answered from the cache. Set 30s to get a new answer when you click regenerate.
+    repeat_window: 0s
+    # Also keep entries in cache.db in the data directory, so stored answers survive
+    # a restart. Entries on disk have the same form as in memory: placeholder text,
+    # compressed, then encrypted. Set false to keep the cache in memory only.
+    # To empty it, stop KyGate and delete cache.db.
+    persist: true
+    max_disk_mb: 1024     # size limit of cache.db; the least recently used entries go first
+
+  # The semantic cache reuses an answer when the last message is almost the same,
+  # such as "What's the capital of France?" after "what is the capital of france".
+  # It needs an embeddings model on an OpenAI-compatible server, such as Ollama:
+  #   1. ollama pull nomic-embed-text
+  #   2. start KyGate with KYGATE_LOCAL_OLLAMA=http://localhost:11434/v1
+  #   3. set enabled: true below
+  # It is narrow on purpose: one virtual key, short plain messages with nothing
+  # detected in them, and an identical conversation before the last message.
+  # It rejects a match when numbers, names, code identifiers, negations, or the
+  # language differ. It starts in shadow mode: the console shows the hits it would
+  # have served and how often they agreed with the real answer. Switch to serve
+  # once you trust it.
+  semantic:
+    enabled: false
+    mode: shadow          # shadow: record only | serve: answer from the cache
+    scope: key            # each virtual key has its own entries
+    ttl: 7d
+    min_similarity: 0.95  # 0.80 to 1; higher is stricter
+    max_prompt_tokens: 256
+    embeddings:
+      connection: local-ollama  # a provider connection's name, never a key; KYGATE_LOCAL_OLLAMA creates local-ollama
+      model: nomic-embed-text
+
+# Budgets in US dollars, per calendar month and day (UTC). Past a soft limit,
+# new conversations go one tier down within their provider (the headers say so);
+# past a hard limit, requests are refused (429). Cache hits cost nothing.
+# Uncomment and set your own amounts:
+# budgets:
+#   org:     { monthly_usd: { soft: 80, hard: 100 } }
+#   per_key: { daily_usd: { hard: 10 } }
+#   per_user: { daily_usd: { hard: 5 } }    # each person named by a user token (X-KyGate-User)
+#   keys:
+#     build-bot: { daily_usd: { soft: 1, hard: 2 } }
+#   at_soft: cheaper_tier   # cheaper_tier | alert
+#   at_hard: reject
+#   on_counters_unavailable: last_known   # Team: when the shared counters are down; or refuse
+# rate_limits:
+#   per_key: { requests_per_minute: 60, tokens_per_minute: 200000 }
+#   per_user: { requests_per_minute: 20 }
+
+# The router. shadow: for each request it records the cheaper model it would
+# use and what that would save, and changes nothing: every request still goes to
+# the model it names. Cautious: one tier down, same provider, short plain prompts
+# at the start of a conversation. off: no router.
+routing:
+  mode: shadow
+
+# User tokens from your identity provider (OpenID Connect), naming the person behind
+# a request on a shared key. Applications can also sign their own: 'kygate key user-secret'.
+# identity:
+#   user_tokens:
+#     issuer: https://login.example.com/realms/corp
+#     audiences: [kygate-apps]
+#     user_claim: sub     # sub | email
+
+audit:
+  capture_payloads: none  # none | masked: also keep masked prompt and answer text, encrypted
+  on_spool_full: block    # block | drop_and_alert
+  retention_days: 90          # usage and audit events
+  payload_retention_days: 30  # captured masked payloads, sooner than their events
+  admin_retention_days: 365   # the administration trail
