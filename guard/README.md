@@ -78,7 +78,7 @@ With ML detection (optional):
 | `--no-models` | off | Load no model pack, even if some are installed: recognizers only |
 | `--workers N` | `4` | Requests handled at the same time |
 
-Once the Guard runs, the policy decides which of its types to act on: `kygate policy enable --list`, then `kygate policy enable TYPE...` (or `PROMPT_INJECTION` for the threat). How to connect it to KyGate, the recognizers file format, the data types, and the measured quality: [docs/deployment.md](../docs/deployment.md#the-guard). The container image: `docker build -t kygate-guard:0.1.0 .`, or `--build-arg EXTRAS=ml` for ML detection; packs are mounted on `/models`.
+Once the Guard runs, the policy decides which of its types to act on: `kygate policy enable --list`, then `kygate policy enable TYPE...` (or `PROMPT_INJECTION` for the threat). How to connect it to KyGate, the recognizers file format, the data types, and the measured quality: [docs/deployment.md](../docs/deployment.md#the-guard). The container image: `docker build -t kygate-guard:0.1.1 .`, or `--build-arg EXTRAS=ml` for ML detection; packs are mounted on `/models`.
 
 ## Adding a model
 

@@ -10,7 +10,7 @@ KyGate sits between your applications and the AI models they call, whether paid 
 
 It is one binary. The first start needs nothing else: no Python, no database server, no container. Every other capability is an option you turn on when you need it.
 
-> **Version 0.1.0**, the first public release. This repository is **KyGate Community**: free and open source under Apache 2.0. Single sign-on, SCIM, a KMS-held master key, and a tamper-evident audit ledger with SIEM export are in **KyGate Enterprise**: see [For companies](#for-companies-kygate-enterprise).
+> **Version 0.1.1**: Go 1.26.11 or later (a fix in net/http), and steadier tests on the 0.1.0 release. This repository is **KyGate Community**: free and open source under Apache 2.0. Single sign-on, SCIM, a KMS-held master key, and a tamper-evident audit ledger with SIEM export are in **KyGate Enterprise**: see [For companies](#for-companies-kygate-enterprise).
 >
 > Figures marked *target* or *estimate* in the docs are design assumptions; measured figures say so.
 

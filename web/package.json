@@ -1,7 +1,7 @@
 {
   "name": "kygate-console",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "KyGate console. The files in static/ are served as they are, with no build step.",
   "license": "Apache-2.0"
 }

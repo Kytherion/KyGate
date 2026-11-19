@@ -660,7 +660,7 @@ Pods run as non-root users with a read-only root filesystem, no capabilities, an
 **Try it** (any cluster; kind works):
 
 ```text
-docker build -t kygate:0.1.0 . && docker build -t kygate-guard:0.1.0 guard/   # then load or push them
+docker build -t kygate:0.1.1 . && docker build -t kygate-guard:0.1.1 guard/   # then load or push them
 kubectl create namespace kygate
 kubectl -n kygate create secret generic kygate-providers --from-literal=OPENAI_API_KEY=sk-...
 helm install kygate deploy/helm/kygate -n kygate --set dev.enabled=true --set providers.envFromSecrets={kygate-providers}

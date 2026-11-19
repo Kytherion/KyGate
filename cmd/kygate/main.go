@@ -53,7 +53,7 @@ import (
 )
 
 // Version of this build.
-var Version = "0.1.0"
+var Version = "0.1.1"
 
 // editionTitle is the edition's name for people: Community or Enterprise.
 func editionTitle() string {
