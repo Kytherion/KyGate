@@ -14,7 +14,7 @@ services:
   kygate:
     build:
       context: ../../..
-    image: kygate:0.1.1
+    image: kygate:0.1.2
     restart: unless-stopped
     ports:
       - "127.0.0.1:4000:4000"
@@ -47,7 +47,7 @@ services:
       context: ../../../guard
       args:
         EXTRAS: ${KYGATE_GUARD_EXTRAS:-}
-    image: kygate-guard:0.1.1
+    image: kygate-guard:0.1.2
     restart: unless-stopped
     # command: ["--recognizers", "/config/recognizers.json"]
     volumes:

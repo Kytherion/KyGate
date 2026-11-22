@@ -85,31 +85,38 @@ func (g *Gateway) guardInspect(ctx context.Context, pol *policy.Policy, req *ing
 		return nil, nil, guardResult{status: "unavailable", err: errNoGuard}
 	}
 	types, threatTypes := pol.GuardEntities(), pol.GuardThreats()
-	// A model the policy requires (detection: model), and a detector for each
-	// threat it names, must be there: without one, the Guard counts as
-	// unavailable for this request. Removing a pack never silently removes the
+	// Every data type the policy sends to the Guard, and every threat it
+	// names, needs a detector there, and a type with detection: model needs a
+	// model: without one, the Guard counts as unavailable for this request. A
+	// type nobody detects is never sent on unchecked, and removing a pack, or
+	// a pack left out for a wrong digest, never silently removes the
 	// protection the policy asks for.
-	if required := append(pol.ModelRequired(), threatTypes...); len(required) > 0 {
+	if required := append(append([]string{}, types...), threatTypes...); len(required) > 0 {
 		levels, known := g.Guard.Levels()
 		if !known {
 			return nil, nil, guardResult{status: "unavailable", err: fmt.Errorf("the Guard has not reported its detectors yet, and the policy requires %s", strings.Join(required, ", "))}
 		}
-		var noModel, noDetector []string
-		for _, t := range pol.ModelRequired() {
-			if levels[t] != "model" {
+		var noModel, noType, noThreat []string
+		for _, t := range types {
+			switch {
+			case pol.Data.Entities[t].Detection == "model" && levels[t] != "model":
 				noModel = append(noModel, t)
+			case levels[t] == "":
+				noType = append(noType, t)
 			}
 		}
 		for _, t := range threatTypes {
 			if levels[t] == "" {
-				noDetector = append(noDetector, t)
+				noThreat = append(noThreat, t)
 			}
 		}
-		if len(noModel) > 0 {
+		switch {
+		case len(noModel) > 0:
 			return nil, nil, guardResult{status: "unavailable", err: fmt.Errorf("the Guard has no model for %s (detection: model); install one with 'kygate-guard models pull'", strings.Join(noModel, ", "))}
-		}
-		if len(noDetector) > 0 {
-			return nil, nil, guardResult{status: "unavailable", err: fmt.Errorf("the Guard has no detector for %s, which the policy names under threats; install one, such as 'kygate-guard models pull prompt-injection'", strings.Join(noDetector, ", "))}
+		case len(noType) > 0:
+			return nil, nil, guardResult{status: "unavailable", err: fmt.Errorf("the Guard has no detector for %s, which the policy names under data.entities; add it to the Guard's recognizers or install a model pack that finds it ('kygate policy enable --list' shows what the Guard finds)", strings.Join(noType, ", "))}
+		case len(noThreat) > 0:
+			return nil, nil, guardResult{status: "unavailable", err: fmt.Errorf("the Guard has no detector for %s, which the policy names under threats; install one, such as 'kygate-guard models pull prompt-injection'", strings.Join(noThreat, ", "))}
 		}
 	}
 	threatRoles := map[string]bool{}

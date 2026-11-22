@@ -349,7 +349,7 @@ func (p *Policy) normalize() error {
 				return fmt.Errorf("data.entities.%s: no dictionary named %q under data.dictionaries", name, strings.TrimPrefix(name, "dict/"))
 			}
 		} else if !knownEntity(name) {
-			p.Warnings = append(p.Warnings, fmt.Sprintf("data.entities.%s: found by the Guard's ML detectors; while no Guard answers, data.on_guard_unavailable applies (%s)", name, orDefault(string(p.Data.OnGuardUnavailable), "block")))
+			p.Warnings = append(p.Warnings, fmt.Sprintf("data.entities.%s: found by the Guard; while no Guard answers, or none has a detector for it, data.on_guard_unavailable applies (%s)", name, orDefault(string(p.Data.OnGuardUnavailable), "block")))
 		}
 	}
 	for _, t := range p.GuardThreats() {
@@ -407,9 +407,9 @@ func (p *Policy) normalize() error {
 	switch e.Scope {
 	case "":
 		e.Scope = "org"
-	case "org", "key":
+	case "org", "team", "project", "key":
 	default:
-		return fmt.Errorf("cache.exact.scope must be org or key")
+		return fmt.Errorf("cache.exact.scope must be org, team, project, or key")
 	}
 	if e.TTL == 0 {
 		e.TTL = Duration(24 * time.Hour)
@@ -764,8 +764,9 @@ func NewHolderFrom(d Docs) (*Holder, error) {
 	h.current.Store(p)
 	h.org = data
 	h.levels, h.effective = map[string]LevelFile{}, map[string]*Policy{}
-	h.loadLevels()
-	h.sig = h.signature()
+	if h.loadLevels() {
+		h.sig = h.signature()
+	} // else the first tick of Watch reads them again
 	return h, nil
 }
 
@@ -833,14 +834,15 @@ func (h *Holder) For(team, project, key string) *Policy {
 }
 
 // loadLevels reads policies/, keeping the last good version of a file that
-// does not merge with the organization's policy.
-func (h *Holder) loadLevels() {
+// does not merge with the organization's policy. It reports false when the
+// files cannot be read, so that the next tick reads them again.
+func (h *Holder) loadLevels() bool {
 	files, warnings, err := h.docs.Levels()
 	if err != nil {
 		if h.OnError != nil {
 			h.OnError(err)
 		}
-		return
+		return false
 	}
 	for _, w := range warnings {
 		if h.OnError != nil {
@@ -865,6 +867,7 @@ func (h *Holder) loadLevels() {
 	}
 	h.levels = next
 	h.effective = map[string]*Policy{}
+	return true
 }
 
 // signature changes when the organization's policy or any level's changes.
@@ -891,9 +894,10 @@ func (h *Holder) reloadIfChanged() {
 	if sig == h.sig {
 		return
 	}
-	h.sig = sig
 	data, err := h.docs.Get(OrgDoc)
 	if err != nil {
+		// A read error may pass, such as a database that does not answer for
+		// a moment: the signature is not recorded, so the next tick reads again.
 		if h.OnError != nil {
 			h.OnError(err)
 		}
@@ -901,6 +905,8 @@ func (h *Holder) reloadIfChanged() {
 	}
 	p, err := Parse(data, h.path)
 	if err != nil {
+		// An invalid edit stays rejected until the document changes again.
+		h.sig = sig
 		if h.OnError != nil {
 			h.OnError(err)
 		}
@@ -909,12 +915,17 @@ func (h *Holder) reloadIfChanged() {
 	p.Path = h.docs.Where(OrgDoc)
 	changed := p.Version != h.Current().Version
 	if changed {
+		// The merged policies of teams, projects, and keys are dropped with
+		// the organization's old policy, in the same step: none is ever served
+		// from a merge with an organization policy that is no longer in force.
 		h.lmu.Lock()
-		h.org = data
-		h.lmu.Unlock()
+		h.org, h.effective = data, map[string]*Policy{}
 		h.current.Store(p)
+		h.lmu.Unlock()
 	}
-	h.loadLevels()
+	if h.loadLevels() {
+		h.sig = sig
+	}
 	if changed && h.OnLoad != nil {
 		h.OnLoad(p)
 	}

@@ -56,14 +56,17 @@ func inspectAnswer(family ingress.Family, body map[string]any, in *detect.Output
 	if in == nil {
 		return
 	}
+	args := func(s string) string { return in.Text(s, true) }
 	if family == ingress.Anthropic {
 		for _, b := range arr(body["content"]) {
 			bm := obj(b)
 			switch str(bm["type"]) {
 			case "text":
 				bm["text"] = in.Text(str(bm["text"]), false)
-			case "tool_use":
-				inspectStrings(obj(bm["input"]), in)
+			case toolUse, serverToolUse, mcpToolUse:
+				if v, ok := bm["input"]; ok {
+					bm["input"] = mapStrings(v, args)
+				}
 			}
 		}
 		return
@@ -77,28 +80,14 @@ func inspectAnswer(family ingress.Family, body map[string]any, in *detect.Output
 			msg["content"] = in.Text(s, false)
 		}
 		for _, tc := range arr(msg["tool_calls"]) {
-			fn := obj(obj(tc)["function"])
-			if s, ok := fn["arguments"].(string); ok {
-				fn["arguments"] = in.Text(s, true)
+			if fn := obj(obj(tc)["function"]); fn != nil {
+				if s, ok := fn["arguments"].(string); ok {
+					fn["arguments"] = args(s)
+				}
 			}
-		}
-	}
-}
-
-func inspectStrings(m map[string]any, in *detect.OutputInspector) {
-	for k, v := range m {
-		switch t := v.(type) {
-		case string:
-			m[k] = in.Text(t, true)
-		case map[string]any:
-			inspectStrings(t, in)
-		case []any:
-			for i, e := range t {
-				switch et := e.(type) {
-				case string:
-					t[i] = in.Text(et, true)
-				case map[string]any:
-					inspectStrings(et, in)
+			if cu := obj(obj(tc)["custom"]); cu != nil {
+				if s, ok := cu["input"].(string); ok {
+					cu["input"] = args(s)
 				}
 			}
 		}

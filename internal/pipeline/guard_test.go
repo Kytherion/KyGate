@@ -26,7 +26,8 @@ type fakeGuard struct {
 	// injections are phrases that score as a prompt injection; nil: the Guard
 	// has no injection detector.
 	injections map[string]float32
-	threatAsks int // Inspect calls that asked for threats
+	threatAsks int  // Inspect calls that asked for threats
+	noScores   bool // answer without the threat scores asked for
 }
 
 func (f *fakeGuard) Inspect(_ context.Context, req *guardpb.InspectRequest) (*guardpb.InspectResponse, error) {
@@ -38,7 +39,7 @@ func (f *fakeGuard) Inspect(_ context.Context, req *guardpb.InspectRequest) (*gu
 	}
 	for _, s := range req.Segments {
 		f.asked = append(f.asked, s.Text)
-		if s.Untrusted && len(req.ThreatTypes) > 0 && f.injections != nil {
+		if s.Untrusted && len(req.ThreatTypes) > 0 && f.injections != nil && !f.noScores {
 			var best float32
 			for phrase, score := range f.injections {
 				if strings.Contains(strings.ToLower(s.Text), phrase) && score > best {
@@ -252,6 +253,56 @@ func TestOverlappingFindingsLeaveNothingUnmasked(t *testing.T) {
 	got := lastUserText(h.up.lastBody())
 	if strings.Contains(got, "alice") || strings.Contains(got, "example.com") || strings.Contains(got, "Martin") {
 		t.Fatalf("part of a value reached the model: %q", got)
+	}
+}
+
+// A data type the policy sends to the Guard and that no detector there finds
+// follows on_guard_unavailable: it is never sent on unchecked. Here the Guard
+// finds PERSON only, and the policy also blocks PHONE_NUMBER.
+func TestGuardTypeWithoutDetectorFailsClosed(t *testing.T) {
+	pol := strings.Replace(guardPolicy(""), "    PERSON:      { action: mask }", "    PERSON:      { action: mask }\n    PHONE_NUMBER: { action: block }", 1)
+	h := newHarness(t, pol)
+	f := &fakeGuard{names: []string{"Alice"}}
+	h.startGuard(f)
+	calls := h.up.calls
+	resp, body := h.post("/v1/messages", h.keyA, messages("Call Alice at +1 415 555 0100", false))
+	if resp.StatusCode != 503 || !strings.Contains(body, "no detector for PHONE_NUMBER") || h.up.calls != calls || f.askedCount() != 0 {
+		t.Fatalf("%d %s", resp.StatusCode, body)
+	}
+	if e := h.event(resp.Header.Get("X-KyGate-Request-Id")); e.Guard != "unavailable" || e.Outcome != "refused" {
+		t.Fatalf("event %+v", e)
+	}
+}
+
+// Two positions whose keys join to the same path ({"a":{"b":..}} and
+// {"a.b":..}): the Guard's findings land on the text they were found in.
+func TestGuardFindingsLandOnTheirOwnSegment(t *testing.T) {
+	h := newHarness(t, guardPolicy(""))
+	h.startGuard(&fakeGuard{names: []string{"Alice"}})
+	body := map[string]any{"model": "claude-opus-5-5", "max_tokens": 10, "messages": []any{
+		map[string]any{"role": "user", "content": "look it up"},
+		map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "tool_use", "id": "t1", "name": "find",
+			"input": map[string]any{"a": map[string]any{"b": "Alice"}, "a.b": "Hello there friend"}}}},
+		map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": "t1", "content": "done"}}},
+	}}
+	if resp, out := h.post("/v1/messages", h.keyA, body); resp.StatusCode != 200 {
+		t.Fatalf("%d %s", resp.StatusCode, out)
+	}
+	input := h.up.lastBody()["messages"].([]any)[1].(map[string]any)["content"].([]any)[0].(map[string]any)["input"].(map[string]any)
+	if input["a"].(map[string]any)["b"] != "[PERSON_1]" || input["a.b"] != "Hello there friend" {
+		t.Fatalf("the model saw %v", input)
+	}
+}
+
+// An answer without the threat score asked for is not a clean segment: it is
+// a Guard that did not do the work (fail closed).
+func TestGuardMissingThreatScoreFailsClosed(t *testing.T) {
+	h := newHarness(t, threatPolicy("{ action: block }"))
+	h.startGuard(&fakeGuard{injections: attacks, noScores: true})
+	calls := h.up.calls
+	resp, body := h.post("/v1/messages", h.keyA, messages("Hello there", false))
+	if resp.StatusCode != 503 || !strings.Contains(body, "no PROMPT_INJECTION score") || h.up.calls != calls {
+		t.Fatalf("%d %s", resp.StatusCode, body)
 	}
 }
 

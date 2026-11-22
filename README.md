@@ -10,7 +10,7 @@ KyGate sits between your applications and the AI models they call, whether paid 
 
 It is one binary. The first start needs nothing else: no Python, no database server, no container. Every other capability is an option you turn on when you need it.
 
-> **Version 0.1.1**: Go 1.26.11 or later (a fix in net/http), and steadier tests on the 0.1.0 release. This repository is **KyGate Community**: free and open source under Apache 2.0. Single sign-on, SCIM, a KMS-held master key, and a tamper-evident audit ledger with SIEM export are in **KyGate Enterprise**: see [For companies](#for-companies-kygate-enterprise).
+> **Version 0.1.2**: every text field a model reads is now inspected, tool definitions included; a data type the Guard cannot find follows `on_guard_unavailable` instead of passing unmasked; callers that share one model call can leave at any time; headers that change an answer are part of the cache key. This repository is **KyGate Community**: free and open source under Apache 2.0. Single sign-on, SCIM, a KMS-held master key, and a tamper-evident audit ledger with SIEM export are in **KyGate Enterprise**: see [For companies](#for-companies-kygate-enterprise).
 >
 > Figures marked *target* or *estimate* in the docs are design assumptions; measured figures say so.
 
@@ -35,7 +35,7 @@ Most AI traffic repeats itself: the same questions, the same system prompts, the
 
 | Saving | How it works | Where it lives | On by default |
 |---|---|---|---|
-| **Exact cache** | The same request (same model, messages, tools, settings) is answered from the cache | Memory, then `cache.db` in your data directory: compressed and encrypted, 1 GB by default, least recently used entries go first | ✅ Yes, 30 days |
+| **Exact cache** | The same request (same model, messages, tools, settings, API version and beta flags) is answered from the cache | Memory, then `cache.db` in your data directory: compressed and encrypted, 1 GB by default, least recently used entries go first | ✅ Yes, 30 days |
 | **Semantic cache** | A look-alike question ("whats the capital of france" after "What is the capital of France?") reuses the stored answer, after strict checks on numbers, names, negations, and language | `cache.db`, next to the exact cache | Off. Starts in shadow mode: it shows what it *would* have served before it serves anything |
 | **Coalescing** | Identical requests that arrive at the same moment share one provider call | Memory | ✅ Yes |
 | **Provider prompt-cache markers** | Long Anthropic prompts get `cache_control` markers, so the next turn is billed at about a tenth of the price | Your provider | ✅ Yes |
@@ -116,7 +116,7 @@ Everything below is optional and off until you turn it on. Start new detections 
 
 ### The Guard: ML detection and prompt-injection defense
 
-The Guard is a small Python service next to KyGate. KyGate detects; the Guard only reports findings. If the Guard is down, a policy that needs it refuses requests rather than sending them unchecked.
+The Guard is a small Python service next to KyGate. KyGate detects; the Guard only reports findings. If the Guard is down, or finds none of a type the policy names, a policy that needs it refuses requests rather than sending them unchecked.
 
 ```sh
 # Install it once, in its own environment (Python 3.10+)
@@ -211,6 +211,7 @@ KyGate stores only hashes of virtual keys and of the admin token. Your real prov
 - The router only **records** what it would do; it never moves a request to another model on its own yet.
 - The semantic cache matches wording, not synonyms, and is scoped to one virtual key.
 - Images, files, and audio are not inspected: they are kept local, refused, or allowed as your policy says.
+- Text is inspected in every field a model reads, not only the messages, but as written: a value encoded otherwise (base64, for example) is not decoded.
 - KyGate does not serve models, is not an agent framework or a RAG system, and does not replace network data-loss prevention.
 
 ## For companies: KyGate Enterprise

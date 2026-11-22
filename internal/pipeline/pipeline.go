@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sort"
 	"strconv"
@@ -53,6 +54,9 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
+
+// bodyReadTimeout bounds the time a client takes to send its request body.
+const bodyReadTimeout = time.Minute
 
 // Gateway serves the model API.
 type Gateway struct {
@@ -162,6 +166,7 @@ type decision struct {
 	outcome      string // blocked | refused
 	vm           *mask.ValueMap
 	masked       int
+	literals     int  // placeholder-shaped text of the request masked as literals
 	sensitiveOut bool // protected values leave unmasked (monitor mode, or to a local target)
 	injected     bool // a threat was flagged: the answer is never cached
 	alert        bool
@@ -211,29 +216,9 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, family ingress.F
 	w.Header().Set("X-KyGate-Request-Id", ev.ID)
 	defer sc.finish()
 
-	// 1 Ingress
-	r.Body = http.MaxBytesReader(w, r.Body, limits.MaxBodyBytes)
-	body, err := ingress.Decode(r.Body)
-	if err != nil {
-		var mbe *http.MaxBytesError
-		if errors.As(err, &mbe) {
-			sc.fail(413, "client_error", "request_too_large", fmt.Sprintf("The request is larger than %d MB.", limits.MaxBodyBytes>>20))
-			return
-		}
-		sc.fail(400, "client_error", "invalid_request", err.Error())
-		return
-	}
-	req, err := ingress.Parse(family, endpoint, body)
-	if err != nil {
-		sc.fail(400, "client_error", "invalid_request", err.Error())
-		return
-	}
-	sc.req = req
-	ev.ModelRequested, ev.Stream = req.Model, req.Stream
-	ev.Unreadable = req.Unreadable
-	sc.st.mark("ingress")
-
-	// 2 Identity
+	// 2 Identity and 3 Limits come first: they need only the headers, so an
+	// unknown key, or a request over a limit, costs no read and no parse of
+	// its body.
 	caller, ok := g.Keys.Resolve(identity.FromRequest(r))
 	if !ok {
 		sc.fail(401, "client_error", "invalid_api_key", "KyGate did not recognize this API key. Use a KyGate virtual key (kg-...), not a provider key. Create one with 'kygate key create <name>'.")
@@ -279,6 +264,36 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, family ingress.F
 		return
 	}
 	sc.st.mark("limits")
+
+	// 1 Ingress. The body has a read deadline of its own: the server has no
+	// read timeout, because a streamed answer can last many minutes.
+	rc := http.NewResponseController(w)
+	rc.SetReadDeadline(time.Now().Add(bodyReadTimeout))
+	r.Body = http.MaxBytesReader(w, r.Body, limits.MaxBodyBytes)
+	body, err := ingress.Decode(r.Body)
+	rc.SetReadDeadline(time.Time{})
+	if err != nil {
+		var mbe *http.MaxBytesError
+		var ne net.Error
+		switch {
+		case errors.As(err, &mbe):
+			sc.fail(413, "client_error", "request_too_large", fmt.Sprintf("The request is larger than %d MB.", limits.MaxBodyBytes>>20))
+		case errors.As(err, &ne) && ne.Timeout():
+			sc.fail(408, "client_error", "request_timeout", fmt.Sprintf("KyGate did not receive the whole request within %s.", bodyReadTimeout))
+		default:
+			sc.fail(400, "client_error", "invalid_request", err.Error())
+		}
+		return
+	}
+	req, err := ingress.Parse(family, endpoint, body)
+	if err != nil {
+		sc.fail(400, "client_error", "invalid_request", err.Error())
+		return
+	}
+	sc.req = req
+	ev.ModelRequested, ev.Stream = req.Model, req.Stream
+	ev.Unreadable = req.Unreadable
+	sc.st.mark("ingress")
 
 	// 8 Route, hard constraints first: the enforce stage needs to know
 	// whether the target is local.
@@ -449,10 +464,14 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, family ingress.F
 			hdr = openaip.ForwardHeaders(r.Header)
 		}
 		upBody = req.Encode()
-		ctx := r.Context()
+		ctx, endCall := r.Context(), func() {}
 		if fl != nil {
-			// Others may follow: the call outlives this caller's connection.
-			ctx = context.WithoutCancel(ctx)
+			// Others may follow: the call outlives this caller's connection,
+			// and ends when no caller reads it any more (cache/flight.go,
+			// which owns endCall once the call has answered).
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithCancel(context.WithoutCancel(ctx))
+			endCall = cancel
 		}
 		up, conn, attempts, err := g.Client.Do(ctx, target.Pool, provider.Call{
 			Method: http.MethodPost, Path: path, Query: r.URL.RawQuery, Body: upBody, Header: hdr, Conversation: conversation,
@@ -463,17 +482,20 @@ func (g *Gateway) serve(w http.ResponseWriter, r *http.Request, family ingress.F
 		}
 		sc.st.mark("upstream")
 		if err != nil {
+			endCall()
 			if r.Context().Err() != nil {
 				ev.Outcome, ev.Reason = "canceled", "the client closed the connection"
 				return
 			}
 			g.Metrics.Add("kygate_upstream_failures_total", 1, "provider", target.Provider)
-			sc.fail(502, "error", "upstream_unreachable", "KyGate could not reach the model provider: "+err.Error())
+			// The details (an address, a network error) go to the event, not to the caller.
+			ev.Reason = "the model provider could not be reached: " + err.Error()
+			sc.fail(502, "error", "upstream_unreachable", "KyGate could not reach the model provider. (request "+ev.ID+")")
 			return
 		}
 		resp = up
 		if fl != nil {
-			resp = fl.Start(up, connName)
+			resp = fl.Start(r.Context(), up, connName, endCall)
 		}
 	} else {
 		ev.Connection = connName
@@ -586,7 +608,8 @@ func (g *Gateway) enforce(pol *policy.Policy, req *ingress.Request, findings []d
 		action policy.Action
 	}
 	counts := map[key]int{}
-	var blockTypes, localTypes []string
+	var blockTypes, localTypes, fixedTypes []string
+	fixedAt := "" // the first field that cannot take a placeholder and holds a value to mask
 	spans := map[int][]mask.Span{}
 
 	for _, f := range findings {
@@ -609,10 +632,16 @@ func (g *Gateway) enforce(pol *policy.Policy, req *ingress.Request, findings []d
 				localTypes = appendUnique(localTypes, f.Type)
 			}
 		case policy.Mask, policy.Redact:
-			if enforce {
-				spans[f.Segment] = append(spans[f.Segment], mask.Span{Start: f.Start, End: f.End, Entity: f.Type, Redact: a == policy.Redact})
-			} else {
+			switch {
+			case !enforce:
 				d.sensitiveOut = true
+			case req.Segments[f.Segment].Fixed:
+				fixedTypes = appendUnique(fixedTypes, f.Type)
+				if fixedAt == "" {
+					fixedAt = req.Segments[f.Segment].ID
+				}
+			default:
+				spans[f.Segment] = append(spans[f.Segment], mask.Span{Start: f.Start, End: f.End, Entity: f.Type, Redact: a == policy.Redact})
 			}
 		case policy.Alert:
 			d.alert = true
@@ -634,7 +663,7 @@ func (g *Gateway) enforce(pol *policy.Policy, req *ingress.Request, findings []d
 		d.sensitiveOut = true
 	}
 
-	refusing := enforce && (len(blockTypes) > 0 || len(localTypes) > 0)
+	refusing := enforce && (len(blockTypes) > 0 || len(localTypes) > 0 || len(fixedTypes) > 0)
 	for k, n := range counts {
 		applied := enforce
 		if k.action == policy.Allow || k.action == policy.Alert {
@@ -669,16 +698,55 @@ func (g *Gateway) enforce(pol *policy.Policy, req *ingress.Request, findings []d
 		d.refuse = fmt.Sprintf("KyGate refused this request: it contains %s, which the policy keeps on local models, and model %q is served by %s. Use a model from a local model server.", humanList(localTypes), req.Model, where)
 		return d
 	}
+	if enforce && len(fixedTypes) > 0 {
+		d.outcome, d.blockedTypes = "refused", fixedTypes
+		d.refuse = fmt.Sprintf("KyGate refused this request: %s contains %s, which the policy masks, and this field cannot take a placeholder. Remove the value from it and send the request again.", fixedAt, humanList(fixedTypes))
+		return d
+	}
 	if enforce {
+		lit := literalTypes(pol, req)
 		for i, seg := range req.Segments {
-			if sp, ok := spans[i]; ok {
-				sp = mergeSpans(sp)
-				seg.Set(d.vm.Apply(seg.Text, sp))
-				d.masked += len(sp)
+			sp := spans[i]
+			if !seg.Fixed {
+				for _, l := range mask.LiteralSpans(seg.Text, lit) {
+					sp = append(sp, mask.Span{Start: l[0], End: l[1], Entity: mask.LiteralType})
+				}
+			}
+			if len(sp) == 0 {
+				continue
+			}
+			sp = mergeSpans(sp)
+			seg.Set(d.vm.Apply(seg.Text, sp))
+			for _, s := range sp {
+				if s.Entity == mask.LiteralType {
+					d.literals++
+				} else {
+					d.masked++
+				}
 			}
 		}
 	}
 	return d
+}
+
+// literalTypes are the placeholder types the request may receive: those of
+// the data types the policy masks. Text already in the shape of one of them
+// is masked as a literal (mask.LiteralType), so it never meets a placeholder
+// of this request. Embedding requests are never masked.
+func literalTypes(pol *policy.Policy, req *ingress.Request) map[string]bool {
+	if req.Endpoint == ingress.Embeddings {
+		return nil
+	}
+	var types map[string]bool
+	for name, r := range pol.Data.Entities {
+		if r.Action == policy.Mask {
+			if types == nil {
+				types = map[string]bool{mask.LiteralType: true}
+			}
+			types[mask.PlaceholderType(name)] = true
+		}
+	}
+	return types
 }
 
 func appendUnique(list []string, s string) []string {
@@ -736,16 +804,62 @@ func (g *Gateway) cacheCheck(sc *serveCtx, d decision) (string, bool) {
 		return bypass(err.Error())
 	}
 	sc.tags = tags
-	scope := "org:" + sc.caller.OrgID
-	if pol.Cache.Exact.Scope == "key" || hint == "scope=key" {
-		scope = "key:" + sc.caller.KeyID
+	parts := [][]byte{[]byte(cacheScope(pol, sc.caller, hint)), []byte(req.Family), []byte(req.Endpoint), []byte(req.Model), cache.Canonical(req.Body), []byte(pol.CacheVersion)}
+	if h := answerHeaders(sc.r); h != "" {
+		// Only when there are some, so that a request without them keeps its
+		// fingerprint, and its stored answer, across an upgrade.
+		parts = append(parts, []byte(h))
 	}
-	fp := cache.Fingerprint(g.orgKey("fingerprint", sc.caller.OrgID),
-		[]byte(scope), []byte(req.Family), []byte(req.Endpoint), []byte(req.Model), cache.Canonical(req.Body), []byte(pol.CacheVersion))
+	fp := cache.Fingerprint(g.orgKey("fingerprint", sc.caller.OrgID), parts...)
 	if g.Cache.Repeat(sc.caller.KeyID, fp, pol.RepeatWindow()) {
 		return bypass("the same key repeated this request within the repeat window")
 	}
 	return fp, true
+}
+
+// cacheScope is who shares exact-cache entries (cache.exact.scope): the
+// organization, a team, a project, or one key. A key outside the level the
+// policy names (a key in no project, under project scope) shares the
+// organization's entries. The client can narrow it to its key.
+func cacheScope(pol *policy.Policy, c identity.Caller, hint string) string {
+	switch {
+	case pol.Cache.Exact.Scope == "key" || hint == "scope=key":
+		return "key:" + c.KeyID
+	case pol.Cache.Exact.Scope == "project" && c.ProjectID != "":
+		return "project:" + c.ProjectID
+	case pol.Cache.Exact.Scope == "team" && c.TeamID != "":
+		return "team:" + c.TeamID
+	}
+	return "org:" + c.OrgID
+}
+
+// answerHeaders are what KyGate forwards, besides the body, that can change
+// an answer: the Anthropic API version and beta flags, OpenAI's beta flags,
+// and the query string. Empty for most requests.
+func answerHeaders(r *http.Request) string {
+	var betas []string
+	for _, v := range r.Header.Values("Anthropic-Beta") {
+		for _, b := range strings.Split(v, ",") {
+			if b = strings.TrimSpace(b); b != "" {
+				betas = append(betas, b)
+			}
+		}
+	}
+	sort.Strings(betas)
+	var parts []string
+	if v := strings.TrimSpace(r.Header.Get("Anthropic-Version")); v != "" && v != anthropicp.DefaultVersion {
+		parts = append(parts, "anthropic-version="+v)
+	}
+	if len(betas) > 0 {
+		parts = append(parts, "anthropic-beta="+strings.Join(betas, ","))
+	}
+	if v := strings.TrimSpace(r.Header.Get("OpenAI-Beta")); v != "" {
+		parts = append(parts, "openai-beta="+v)
+	}
+	if r.URL.RawQuery != "" {
+		parts = append(parts, "query="+r.URL.RawQuery)
+	}
+	return strings.Join(parts, "\n")
 }
 
 // serveHit answers from the cache. The stored answer is in placeholder form
@@ -821,11 +935,21 @@ func (g *Gateway) serveHit(sc *serveCtx, e *cache.Entry, vm *mask.ValueMap, conv
 func (g *Gateway) relayJSON(sc *serveCtx, resp *http.Response, vm *mask.ValueMap) map[string]any {
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 	if err != nil {
+		if sc.r.Context().Err() != nil {
+			sc.ev.Outcome, sc.ev.Reason = "canceled", "the client closed the connection"
+			return nil
+		}
 		sc.fail(502, "error", "upstream_read", "KyGate lost the connection to the model provider while reading the answer.")
 		return nil
 	}
 	masked, err := decodeObj(raw)
 	if err != nil {
+		if sc.out != nil {
+			// Output inspection is on, and an answer KyGate cannot read cannot
+			// be inspected: it is never passed on unchecked.
+			sc.fail(502, "error", "upstream_unreadable", "KyGate could not read the model provider's answer, so it could not inspect it. (request "+sc.ev.ID+")")
+			return nil
+		}
 		// Not JSON: pass it through as it came.
 		sc.w.WriteHeader(resp.StatusCode)
 		sc.wrote = true
@@ -901,6 +1025,22 @@ func (g *Gateway) relayStream(sc *serveCtx, resp *http.Response, vm *mask.ValueM
 		ev.Outcome, ev.Reason = "canceled", "the client closed the connection during the stream"
 		return nil
 	}
+	// flushHeld sends text held back for a split placeholder at the end of a
+	// stream that stopped before its blocks or choices did.
+	flushHeld := func() {
+		var held []sseEvent
+		if an != nil {
+			held = an.flushAll()
+		} else {
+			held = oa.flushAll()
+		}
+		for _, f := range held {
+			if sc.out != nil && len(sc.out.Blocked) > 0 {
+				return
+			}
+			sw.write(encodeSSE(sc.family, f))
+		}
+	}
 	if errors.Is(err, errOutputBlocked) {
 		// Output inspection stops the stream (architecture §4.2, stage 10). The
 		// headers are already sent: the reason goes in an error event.
@@ -914,7 +1054,9 @@ func (g *Gateway) relayStream(sc *serveCtx, resp *http.Response, vm *mask.ValueM
 		return oa.acc.build()
 	}
 	if err != nil {
-		// A failure in mid-stream ends the stream with an error event.
+		// A failure in mid-stream ends the stream with an error event, after
+		// the text produced so far.
+		flushHeld()
 		ev.Outcome, ev.Reason = "error", "the provider stream broke: "+err.Error()
 		msg := "KyGate lost the connection to the model provider during the answer."
 		if sc.family == ingress.Anthropic {
@@ -925,6 +1067,9 @@ func (g *Gateway) relayStream(sc *serveCtx, resp *http.Response, vm *mask.ValueM
 	}
 	if an != nil {
 		if an.failed || !an.acc.done {
+			if !an.failed {
+				flushHeld()
+			}
 			if ev.Outcome == "ok" {
 				ev.Outcome, ev.Reason = "error", "the provider stream ended without a final event"
 			}
@@ -934,9 +1079,7 @@ func (g *Gateway) relayStream(sc *serveCtx, resp *http.Response, vm *mask.ValueM
 	if oa.failed {
 		ev.Outcome, ev.Reason = "error", "the provider sent an error in the stream"
 	} else if !oa.acc.done {
-		for _, f := range oa.flushAll() {
-			sw.write(encodeSSE(sc.family, f))
-		}
+		flushHeld()
 	}
 	return oa.acc.build()
 }

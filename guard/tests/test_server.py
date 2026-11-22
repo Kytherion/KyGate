@@ -78,6 +78,26 @@ def test_not_ready_is_unavailable():
         server.stop(0)
 
 
+def test_a_failing_detector_answers_internal_without_the_text(caplog):
+    class Broken(ConfiguredRecognizers):
+        def detect(self, text, entity_types):
+            raise ValueError(f"cannot read {text!r}")
+
+    service = GuardService([Broken.from_config(CONFIG)], languages=[])
+    server, port = build_server("127.0.0.1:0", service)
+    server.start()
+    service.mark_ready()
+    try:
+        with grpc.insecure_channel(f"127.0.0.1:{port}") as ch:
+            with pytest.raises(grpc.RpcError) as e:
+                guard_pb2_grpc.GuardStub(ch).Inspect(guard_pb2.InspectRequest(segments=[seg("Alice Martin, card 4111")]))
+            assert e.value.code() == grpc.StatusCode.INTERNAL
+            assert "Alice" not in e.value.details() and "4111" not in e.value.details()
+        assert "Alice" not in caplog.text and "ValueError" in caplog.text
+    finally:
+        server.stop(0)
+
+
 def test_byte_offsets_table():
     b = ByteOffsets("aé🙂b")
     assert [b(i) for i in range(5)] == [0, 1, 3, 7, 8]

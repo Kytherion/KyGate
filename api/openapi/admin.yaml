@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KyGate reporting and admin API
-  version: 0.1.1
+  version: 0.1.2
   description: |
     The reporting API behind the console, and the admin API. It is served on
     the console port, apart from the model API. Every figure is metadata:

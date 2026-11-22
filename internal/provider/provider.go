@@ -46,7 +46,12 @@ type Connection struct {
 	// when nobody said. A policy that pins regions never uses a connection
 	// without one.
 	Region string
-	key    string
+	// Organization and Project are the OpenAI organization and project the
+	// key bills, sent as OpenAI-Organization and OpenAI-Project. They belong
+	// to the connection, never to a client: a caller of the gateway does not
+	// choose what the operator's key bills. Empty: the key's own default.
+	Organization, Project string
+	key                   string
 
 	mu         sync.Mutex
 	state      string // unused | ok | rate_limited | rejected | unreachable | error
@@ -165,8 +170,19 @@ func (c *Connection) Models() []string {
 // Authorize sets a connection's authentication headers on an outgoing request.
 func Authorize(c *Connection, h http.Header) { c.authorize(h) }
 
-// authorize sets the provider's authentication headers.
+// authorize sets the provider's authentication headers, and for OpenAI the
+// connection's organization and project.
 func (c *Connection) authorize(h http.Header) {
+	if c.Provider == OpenAI {
+		h.Del("OpenAI-Organization")
+		h.Del("OpenAI-Project")
+		if c.Organization != "" {
+			h.Set("OpenAI-Organization", c.Organization)
+		}
+		if c.Project != "" {
+			h.Set("OpenAI-Project", c.Project)
+		}
+	}
 	if c.key == "" {
 		return
 	}
@@ -192,7 +208,9 @@ func NewRegistry() *Registry {
 }
 
 // Replace installs a new set of connections, keeping the state of those
-// whose name, provider, and base URL did not change.
+// that did not change. A change of region, organization, or project makes a
+// new connection, so that it applies at once: a region decides where a pinned
+// request may go.
 func (r *Registry) Replace(conns []*Connection) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -201,7 +219,8 @@ func (r *Registry) Replace(conns []*Connection) {
 		old[c.Name] = c
 	}
 	for i, c := range conns {
-		if o, ok := old[c.Name]; ok && o.Provider == c.Provider && o.BaseURL == c.BaseURL && o.key == c.key {
+		if o, ok := old[c.Name]; ok && o.Provider == c.Provider && o.BaseURL == c.BaseURL && o.key == c.key &&
+			o.Region == c.Region && o.Organization == c.Organization && o.Project == c.Project {
 			conns[i] = o
 		}
 	}

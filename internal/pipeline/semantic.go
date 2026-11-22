@@ -52,7 +52,7 @@ func (g *Gateway) semanticEligible(sc *serveCtx, d decision, fp string) *semReq 
 	if req.Endpoint != ingress.Chat && req.Endpoint != ingress.Messages {
 		return nil
 	}
-	if len(d.counts) > 0 || len(req.Unreadable) > 0 || d.masked > 0 {
+	if len(d.counts) > 0 || len(req.Unreadable) > 0 || d.masked > 0 || d.literals > 0 {
 		return nil
 	}
 	for _, k := range []string{"tools", "tool_choice", "functions", "function_call"} {
@@ -94,8 +94,11 @@ func (g *Gateway) semanticEligible(sc *serveCtx, d decision, fp string) *semReq 
 	}
 	before["messages"] = msgs[:n]
 	scope := "key:" + sc.caller.KeyID
-	ctxFP := cache.Fingerprint(g.orgKey("fingerprint", sc.caller.OrgID), []byte("semantic-context"),
-		[]byte(scope), []byte(req.Family), []byte(req.Endpoint), []byte(req.Model), cache.Canonical(before), []byte(pol.CacheVersion))
+	fpParts := [][]byte{[]byte("semantic-context"), []byte(scope), []byte(req.Family), []byte(req.Endpoint), []byte(req.Model), cache.Canonical(before), []byte(pol.CacheVersion)}
+	if h := answerHeaders(sc.r); h != "" {
+		fpParts = append(fpParts, []byte(h))
+	}
+	ctxFP := cache.Fingerprint(g.orgKey("fingerprint", sc.caller.OrgID), fpParts...)
 	return &semReq{fp: fp, text: text, context: ctxFP}
 }
 

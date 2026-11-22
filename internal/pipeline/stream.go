@@ -123,6 +123,7 @@ type oaChoice struct {
 type oaTool struct {
 	id, typ, name string
 	args          strings.Builder
+	custom        bool // a custom tool: its input is free text, under "custom"
 }
 
 func newOpenAIStream(vm *mask.ValueMap, out *detect.OutputInspector, wantUsage bool) *openaiStream {
@@ -198,20 +199,24 @@ func (s *openaiStream) handle(ev sseEvent) []sseEvent {
 			if v := str(tcm["type"]); v != "" {
 				tool.typ = v
 			}
-			fn := obj(tcm["function"])
+			fn, field, isJSON := obj(tcm["function"]), "arguments", true
+			if cu := obj(tcm["custom"]); cu != nil {
+				// A custom tool's input is free text, not JSON.
+				fn, field, isJSON, tool.custom = cu, "input", false, true
+			}
 			if fn != nil {
 				if v := str(fn["name"]); v != "" {
 					tool.name = v
 				}
-				if t, ok := fn["arguments"].(string); ok {
+				if t, ok := fn[field].(string); ok {
 					tool.args.WriteString(t)
 					key := [2]int{idx, ti}
 					st := s.args[key]
 					if st == nil {
-						st = newChannel(s.out, s.vm, true, true)
+						st = newChannel(s.out, s.vm, true, isJSON)
 						s.args[key] = st
 					}
-					fn["arguments"] = st.Push(t)
+					fn[field] = st.Push(t)
 				}
 			}
 		}
@@ -258,7 +263,11 @@ func (s *openaiStream) flushChoice(idx int, delta map[string]any) {
 	sort.Slice(keys, func(i, j int) bool { return keys[i][1] < keys[j][1] })
 	for _, k := range keys {
 		calls := arr(delta["tool_calls"])
-		calls = append(calls, map[string]any{"index": k[1], "function": map[string]any{"arguments": s.args[k].Flush()}})
+		held := map[string]any{"index": k[1], "function": map[string]any{"arguments": s.args[k].Flush()}}
+		if t := s.acc.choices[idx].tools[k[1]]; t != nil && t.custom {
+			held = map[string]any{"index": k[1], "custom": map[string]any{"input": held["function"].(map[string]any)["arguments"]}}
+		}
+		calls = append(calls, held)
 		delta["tool_calls"] = calls
 	}
 }
@@ -311,6 +320,10 @@ func (a *openaiAcc) build() map[string]any {
 				if typ == "" {
 					typ = "function"
 				}
+				if t.custom {
+					calls = append(calls, map[string]any{"id": t.id, "type": typ, "custom": map[string]any{"name": t.name, "input": t.args.String()}})
+					continue
+				}
 				calls = append(calls, map[string]any{"id": t.id, "type": typ, "function": map[string]any{"name": t.name, "arguments": t.args.String()}})
 			}
 			msg["tool_calls"] = calls
@@ -350,6 +363,11 @@ func synthOpenAI(body map[string]any, wantUsage bool) []sseEvent {
 			var deltas []any
 			for ti, tc := range calls {
 				tcm := obj(tc)
+				if cu := obj(tcm["custom"]); cu != nil {
+					deltas = append(deltas, map[string]any{"index": ti, "id": tcm["id"], "type": tcm["type"],
+						"custom": map[string]any{"name": cu["name"], "input": cu["input"]}})
+					continue
+				}
 				fn := obj(tcm["function"])
 				deltas = append(deltas, map[string]any{"index": ti, "id": tcm["id"], "type": tcm["type"],
 					"function": map[string]any{"name": fn["name"], "arguments": fn["arguments"]}})
@@ -494,6 +512,26 @@ func (s *anthropicStream) handle(ev sseEvent) []sseEvent {
 		return []sseEvent{ev}
 	}
 	return []sseEvent{{Event: ev.Event, Data: ingress.Marshal(m)}}
+}
+
+// flushAll returns deltas for text still held back, at the end of a stream
+// that stopped before its blocks did.
+func (s *anthropicStream) flushAll() []sseEvent {
+	idxs := make([]int, 0, len(s.acc.blocks))
+	for i := range s.acc.blocks {
+		idxs = append(idxs, i)
+	}
+	sort.Ints(idxs)
+	var out []sseEvent
+	for _, idx := range idxs {
+		if st := s.text[idx]; st != nil && st.Pending() {
+			out = append(out, deltaEvent(idx, map[string]any{"type": "text_delta", "text": st.Flush()}))
+		}
+		if st := s.json[idx]; st != nil && st.Pending() {
+			out = append(out, deltaEvent(idx, map[string]any{"type": "input_json_delta", "partial_json": st.Flush()}))
+		}
+	}
+	return out
 }
 
 func (s *anthropicStream) stream(m map[int]*channel, idx int, isJSON bool) *channel {

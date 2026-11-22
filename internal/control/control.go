@@ -385,11 +385,19 @@ func Connections(ctx context.Context, cs store.ConfigStore, master []byte, org s
 	}
 	// KYGATE_REGION_<NAME> sets or replaces a connection's region, for
 	// environment and stored connections alike: KYGATE_REGION_OPENAI_TEAM=eu
-	// for the connection openai-team.
+	// for the connection openai-team. KYGATE_OPENAI_ORG_<NAME> and
+	// KYGATE_OPENAI_PROJECT_<NAME> set the organization and project an
+	// OpenAI connection bills.
 	env := map[string]string{}
 	for _, kv := range provider.Environ() {
-		if i := strings.IndexByte(kv, '='); i > 0 && strings.HasPrefix(kv, "KYGATE_REGION_") {
+		if i := strings.IndexByte(kv, '='); i > 0 && (strings.HasPrefix(kv, "KYGATE_REGION_") || strings.HasPrefix(kv, "KYGATE_OPENAI_ORG_") || strings.HasPrefix(kv, "KYGATE_OPENAI_PROJECT_")) {
 			env[kv[:i]] = kv[i+1:]
+		}
+	}
+	for _, c := range all {
+		if c.Provider == provider.OpenAI {
+			c.Organization = strings.TrimSpace(env[ConnectionVariable("KYGATE_OPENAI_ORG_", c.Name)])
+			c.Project = strings.TrimSpace(env[ConnectionVariable("KYGATE_OPENAI_PROJECT_", c.Name)])
 		}
 	}
 	for _, c := range all {
@@ -409,8 +417,12 @@ func Connections(ctx context.Context, cs store.ConfigStore, master []byte, org s
 
 // RegionVariable is the environment variable that sets a connection's
 // region: KYGATE_REGION_ and the name in upper case, dashes as underscores.
-func RegionVariable(name string) string {
-	return "KYGATE_REGION_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
+func RegionVariable(name string) string { return ConnectionVariable("KYGATE_REGION_", name) }
+
+// ConnectionVariable is the environment variable of one connection's
+// setting: the prefix, then the name in upper case, dashes as underscores.
+func ConnectionVariable(prefix, name string) string {
+	return prefix + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
 }
 
 // NormalizeRegion checks a connection's region; "" means none.

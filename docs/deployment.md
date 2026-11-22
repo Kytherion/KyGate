@@ -247,6 +247,8 @@ data:
 
 `detection` is `any` by default: a list or a model. With `model`, a Guard that has no model for the type counts as unavailable for it, and `on_guard_unavailable` decides; KyGate never falls back to the list silently.
 
+A type that the Guard does not find at all, by a list or a model, counts as unavailable too: a name the recognizers file does not list, a pack that was not loaded (its SHA-256 did not match, or `[ml]` is not installed), or a typo in the policy. Such requests follow `on_guard_unavailable`; they are never sent with that type unchecked. `kygate policy check --guard ADDR` lists these types, and `--strict` makes it fail for a CI job.
+
 ### Prompt injection
 
 A prompt injection is text that tries to take over the model: "ignore your previous instructions", a jailbreak, a request to reveal the system prompt, or such orders hidden in a web page or a file that a tool returns. With the `prompt-injection` pack, the Guard scores each untrusted piece of text, and the policy decides.
@@ -289,13 +291,14 @@ threats:
 
 - **It sends prose only, for personal data.** System prompts, user turns, and assistant turns go to the Guard. Tool results and tool-call arguments get the fast detectors only, because names there raise many false alarms. For prompt injection, when the policy names it, user turns and tool results are sent too, marked as untrusted; the system prompt never is.
 - **It asks once per piece of text.** The findings memo remembers what the Guard found in each segment, as positions and types, never text. A conversation's earlier turns are never sent again, and keep the masking they were first sent with.
-- **It fails closed.** Every call has a deadline, 5 seconds by default (`--guard-timeout`, `KYGATE_GUARD_TIMEOUT`). A Guard that is down, still loading, too slow, or that answers with positions outside the text counts as unavailable, and `on_guard_unavailable` decides: `block` refuses the request (503); `local_only` lets it go to a local model only; `fast_detectors_only` sends it with the fast detectors' masking alone and flags it in the console.
+- **It fails closed.** Every call has a deadline, 5 seconds by default (`--guard-timeout`, `KYGATE_GUARD_TIMEOUT`). A Guard that is down, still loading, too slow, that has no detector for a type or threat the policy names, that answers with positions outside the text, or that leaves out a threat score it was asked for counts as unavailable, and `on_guard_unavailable` decides: `block` refuses the request (503); `local_only` lets it go to a local model only; `fast_detectors_only` sends it with the fast detectors' masking alone and flags it in the console.
+- **Its own failures are recorded by their code.** When the Guard fails inside its code, the request's event, the console, and the Guard's answer say so without the error's message, which could quote the text it was reading; the Guard's log names the kind of error only.
 - **It reconnects by itself.** A Guard started after KyGate, or restarted, is used again without restarting KyGate.
 
 **Where to see it:**
 
 - **A Guard that runs unused:** when the policy names none of the types the Guard finds, the start banner, `kygate service status`, `kygate policy check --guard`, and the console say "not used" and point to `kygate policy enable --list`.
-- **Which level covers each type:** the start banner, `kygate service status`, and the console say, for each type the policy acts on, `list` or `model`, for example "PERSON: list only, a name that is not on the list is not found". `kygate policy check --guard ADDR` asks the Guard and warns about a type covered by a list alone, or not at all.
+- **Which level covers each type:** the start banner, `kygate service status`, and the console say, for each type the policy acts on, `list` or `model`, for example "PERSON: list only, a name that is not on the list is not found". `kygate policy check --guard ADDR` asks the Guard and warns about a type covered by a list alone, or not at all; with `--strict` it exits with status 1 when a type or threat the policy needs the Guard for is not covered, or when no `--guard` is given.
 
 - **The start banner and `kygate service status`:** the Guard's address and state, and the types the policy needs it for.
 - **The console's Protection page:** the Guard's state, the types it finds, its calls, failures, average latency, and last error, the findings memo, and what happens while it does not answer. With a threat rule: the injection attempts, and the rule itself. Overview and Setup show a warning when the policy needs a Guard that is not ready.
@@ -461,7 +464,7 @@ By default a request without a token is accepted, and counts to its key only, so
 
 ## Coalescing and provider cache markers
 
-**Coalescing.** When identical requests arrive while the first is still waiting for its model, they wait for it and share its answer: one call, one cost. Each caller still gets its own values back (two users whose card numbers differ share the call, because the model saw the same masked request). A follower of a stream gets what was produced so far, then follows live. If the first caller disconnects, the call goes on for the others. Followers show `X-KyGate-Cache: coalesced`, and their cost counts as avoided. Only requests the exact cache could store are shared. It is always on, within one KyGate process.
+**Coalescing.** When identical requests arrive while the first is still waiting for its model, they wait for it and share its answer: one call, one cost. Each caller still gets its own values back (two users whose card numbers differ share the call, because the model saw the same masked request). A follower of a stream gets what was produced so far, then follows live. If the first caller disconnects, the call goes on for the others. Every caller can leave at any time, even while the provider is silent, and its request slot is freed at once; when the last one leaves before the answer is complete, the call ends, since nobody would read the rest. An answer larger than 64 MB ends the shared call with an error. Followers show `X-KyGate-Cache: coalesced`, and their cost counts as avoided. Only requests the exact cache could store are shared. It is always on, within one KyGate process.
 
 **Provider cache markers.** Anthropic bills a repeated prompt beginning at about a tenth of the input price, but only up to a cache marker (`cache_control`) placed in the request; writing that beginning costs about a quarter more, once. Most clients place none. KyGate adds them to Anthropic requests that carry none of their own:
 
@@ -548,7 +551,7 @@ data:
   regions: [eu]
 ```
 
-- **Each connection has a region**, where its endpoint processes data: `KYGATE_REGION_<NAME>` for any connection (`KYGATE_REGION_OPENAI=us`, `KYGATE_REGION_OPENAI_TEAM=eu`, `KYGATE_REGION_LOCAL_OLLAMA=on-prem`), or for a stored one `kygate provider add --region eu`, `kygate provider region NAME eu`, the console, or `PUT /api/v1/admin/providers/{name}/region`. The environment variable wins over a stored region. Region names are letters, digits, and dashes, in lower case.
+- **Each connection has a region**, where its endpoint processes data: `KYGATE_REGION_<NAME>` for any connection (`KYGATE_REGION_OPENAI=us`, `KYGATE_REGION_OPENAI_TEAM=eu`, `KYGATE_REGION_LOCAL_OLLAMA=on-prem`), or for a stored one `kygate provider add --region eu`, `kygate provider region NAME eu`, the console, or `PUT /api/v1/admin/providers/{name}/region`. The environment variable wins over a stored region. Region names are letters, digits, and dashes, in lower case. A stored region changed while KyGate runs applies within seconds, to the next request.
 - **A connection without a region is never used** while the policy pins regions: an unknown place is not an allowed one.
 - **A request with no allowed connection is refused** (403, `X-KyGate-Blocked: REGION`, code `region_pinned`), before the cache and before any call. Security fails closed.
 - **The semantic cache's embeddings** go only to a connection in an allowed region; otherwise the request skips the semantic cache.
@@ -660,7 +663,7 @@ Pods run as non-root users with a read-only root filesystem, no capabilities, an
 **Try it** (any cluster; kind works):
 
 ```text
-docker build -t kygate:0.1.1 . && docker build -t kygate-guard:0.1.1 guard/   # then load or push them
+docker build -t kygate:0.1.2 . && docker build -t kygate-guard:0.1.2 guard/   # then load or push them
 kubectl create namespace kygate
 kubectl -n kygate create secret generic kygate-providers --from-literal=OPENAI_API_KEY=sk-...
 helm install kygate deploy/helm/kygate -n kygate --set dev.enabled=true --set providers.envFromSecrets={kygate-providers}
@@ -708,6 +711,7 @@ OTEL_SERVICE_NAME=kygate                                # the default
 | `--policy`, `KYGATE_POLICY` | `<data-dir>/policy.yaml` | Policy file, reloaded within seconds of a change. An invalid edit keeps the last good version in force |
 | `--max-concurrency` | `1024` | Requests in flight before new ones are refused |
 | `KYGATE_REGION_<NAME>` | none | The region of the connection NAME (`OPENAI`, `OPENAI_TEAM`, `LOCAL_OLLAMA` …), for `data.regions` ([Region pinning](#region-pinning)) |
+| `KYGATE_OPENAI_ORG_<NAME>`, `KYGATE_OPENAI_PROJECT_<NAME>` | the key's own default | The OpenAI organization and project that the connection NAME bills, sent as `OpenAI-Organization` and `OpenAI-Project`. A client's own headers of those names are not forwarded: an application does not choose what your key bills. A key that needs another organization or project than its default gets it here |
 | `--role`, `KYGATE_ROLE` | `all` | `all`: everything in one process (Solo). `gateway`: the model API only. `control`: the console, the admin API, first-start setup, and retention ([The Team profile](#the-team-profile)) |
 | `--database-url`, `KYGATE_DATABASE_URL` | none: SQLite in the data directory | PostgreSQL, `postgres://user:password@host:5432/db`, for configuration, events, and the semantic cache (Team). Every command takes it |
 | `--counters-url`, `KYGATE_COUNTERS_URL` | none: in the process | Valkey for budget and rate counters, shared by the gateways. Run it with `noeviction` and append-only persistence |
@@ -749,7 +753,7 @@ Solo runs every role in one process (`--role=all`). The Team profile runs the ga
 | `kygate audit verify [--json]`, `kygate audit status` | Enterprise. The tamper-evident audit ledger ([Audit integrity](#audit-integrity-and-siem-export)) |
 | `kygate master-key new --kms URI`, `master-key status`, `master-key wrap --kms URI [--remove-plain]`, `master-key rewrap --kms URI` | Enterprise. The master key in Vault or a cloud KMS ([Master key in a KMS](#the-master-key-in-a-key-management-service)) |
 | `kygate admin-token reset` | Replaces the console admin token and prints the new one, once |
-| `kygate policy check [FILE] [--guard ADDR]` | Validates a policy file. With `--guard`, also says which level finds each data type the policy needs the Guard for, or that the Guard is not used |
+| `kygate policy check [FILE] [--guard ADDR] [--strict]` | Validates a policy file. With `--guard`, also says which level finds each data type the policy needs the Guard for, or that the Guard is not used. With `--strict`, exits with status 1 when the Guard does not find a type or threat the policy needs it for, or when the policy needs a Guard and no `--guard` is given: a check for a CI job |
 | `kygate policy enable TYPE... [--action A] [--require-model] [--yes]` | Turns data types on in the policy, after showing the lines and asking; `alert` by default. Keeps a `.bak` |
 | `kygate policy enable PROMPT_INJECTION [--action alert\|block\|allow] [--yes]` | Turns prompt-injection detection on under `threats:`; `alert` by default. Needs the Guard and its `prompt-injection` pack |
 | `kygate policy enable --list [--guard ADDR]` | The types the Guard finds, their level, and what the policy does with each; threats first, then data types |
@@ -766,6 +770,15 @@ The management commands work on an existing installation and take `--data-dir`. 
 | `POST /v1/messages/count_tokens` | Anthropic, masked, not cached |
 | `GET /healthz`, `GET /readyz` | Health |
 | `POST /kygate/v1/feedback` | KyGate's own: an application's rating of an answer, by its `X-KyGate-Request-Id` ([Answer quality](#answer-quality)) |
+
+**What is inspected in a request.** Every field that carries text to the model: the messages (text, tool calls and their arguments, tool results, documents), and every other field, such as tool and response-format definitions, a predicted output (`prediction`), stop sequences, `user`, `metadata`, and fields KyGate does not know yet. Settings (numbers, flags, choices) and the structural values of a schema (a `type`, a `name`, a `pattern`) are not text. Each finding gets the policy's action wherever it is. Details:
+
+- **A participant's `name`** (OpenAI) must match a fixed pattern, so it cannot take a placeholder: a value the policy masks there refuses the request (403, with the field named); remove the value from the name.
+- **A remote MCP server's `authorization_token`** (Anthropic `mcp_servers`) is that server's own credential, which the request sends to Anthropic on purpose: it is not scanned. The rest of `mcp_servers` is.
+- **Text that already has the shape of a placeholder** of a type the policy masks, such as `[EMAIL_1]` typed by a user or left in an earlier answer, is masked as `[LITERAL_n]` and comes back as written, so it can never be taken for a value of the request.
+- **Encoded text is not decoded:** a value written in base64, for example, is not found.
+- **`store: true`** (OpenAI) is forwarded: OpenAI keeps the masked form. Each request still carries its whole conversation, so values are put back as usual.
+- **The key is checked first:** a request with an unknown key, or over its limits, is refused before its body is read. A body must arrive within a minute (408).
 
 | Response header | Meaning |
 |---|---|
@@ -790,7 +803,7 @@ A request names the person behind it with `X-KyGate-User: <signed token>` ([Peop
 | Cache setting, in the policy file | Default | Meaning |
 |---|---|---|
 | `cache.exact.enabled` | `true` | The exact cache: the identical request is answered from the stored answer |
-| `cache.exact.scope` | `org` | `org`: shared by every virtual key. `key`: each virtual key has its own entries |
+| `cache.exact.scope` | `org` | `org`: shared by every virtual key. `team`, `project`: shared by the keys of one team, or of one project; a key outside any team or project shares the organization's entries. `key`: each virtual key has its own entries. A level's policy file can narrow it for its own keys |
 | `cache.exact.ttl` | `30d` in the starter policy; `24h` when the policy file does not name it | How long a stored answer is served, counted from when it was stored |
 | `cache.exact.repeat_window` | `0s` (off) in the starter policy; `30s` when the policy file does not name it | The same key repeating the same request within this window gets a fresh, paid answer, as a "regenerate" click expects |
 | `cache.exact.max_size_mb` | `256` | Memory budget of the in-process cache |
@@ -811,6 +824,8 @@ A policy file written by an earlier version keeps its behavior: the settings it 
 What to know about the cache on disk ([architecture.md §3.4](architecture.md#34-cache-rules), [§4.5](architecture.md#45-cache-internals)):
 
 - **Entries on disk have the same form as in memory:** placeholder text, compressed with zstd, then encrypted. The file works the same on Windows and Linux.
+- **What an entry is keyed by:** the masked request, the model, the scope, the policy's cache version, and the parts of the call that KyGate forwards besides the body and that can change the answer: `Anthropic-Version` (other than the default), `Anthropic-Beta`, `OpenAI-Beta`, and the query string. An answer made with one beta feature is never served to a request with another.
+- **Who learns what:** within a scope, a caller who sends exactly the same masked request as another gets a hit, and so learns that someone asked it. Narrow the scope (`team`, `project`, `key`) where that matters.
 - **Nothing is loaded at start.** An entry is read from the file the first time it is asked for, then kept in memory.
 - **Editing a comment, a TTL, a size, or the audit settings keeps every stored answer.** Changing the mode, a data rule, or the exact-cache scope starts a new cache, because those can change the masked request. The earlier entries stay until they expire or are evicted.
 - **A long TTL serves old answers.** A pinned model name is safe. A model alias keeps receiving the answer of the model it pointed to when the entry was stored.

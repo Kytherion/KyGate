@@ -16,14 +16,17 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	"github.com/Kytherion/KyGate/internal/detect"
 	"github.com/Kytherion/KyGate/internal/detect/guard/guardpb"
@@ -109,8 +112,14 @@ func (c *Client) Inspect(ctx context.Context, segs []Segment, entityTypes, threa
 	req := &guardpb.InspectRequest{EntityTypes: entityTypes, ThreatTypes: threatTypes, PolicyVersion: policyVersion}
 	byID := map[string]Segment{}
 	for _, s := range segs {
-		req.Segments = append(req.Segments, &guardpb.Segment{Id: s.ID, Role: s.Role, Kind: s.Kind, Untrusted: s.Untrusted, Text: s.Text})
-		byID[s.ID] = s
+		// The ID on the wire is the segment's index, unique by construction,
+		// so a finding can only land on the text it was found in.
+		id := strconv.Itoa(s.Index)
+		if _, dup := byID[id]; dup {
+			return nil, nil, fmt.Errorf("two segments share the index %d", s.Index)
+		}
+		req.Segments = append(req.Segments, &guardpb.Segment{Id: id, Role: s.Role, Kind: s.Kind, Untrusted: s.Untrusted, Text: s.Text})
+		byID[id] = s
 	}
 	chars := 0
 	for _, s := range segs {
@@ -120,9 +129,12 @@ func (c *Client) Inspect(ctx context.Context, segs []Segment, entityTypes, threa
 	defer cancel()
 	start := time.Now()
 	resp, err := c.api.Inspect(ctx, req)
+	if err != nil {
+		err = fmt.Errorf("the Guard at %s: %s", c.Addr, Describe(err))
+	}
 	c.record(start, err)
 	if err != nil {
-		return nil, nil, fmt.Errorf("the Guard at %s: %w", c.Addr, err)
+		return nil, nil, err
 	}
 	var findings []detect.Finding
 	for _, f := range resp.Findings {
@@ -141,6 +153,7 @@ func (c *Client) Inspect(ctx context.Context, segs []Segment, entityTypes, threa
 		findings = append(findings, detect.Finding{Segment: s.Index, Type: f.EntityType, Start: start, End: end, Score: float64(f.Score), Detector: f.Detector, Language: f.Language})
 	}
 	var threats []Threat
+	scored := map[string]bool{} // segment ID + threat type
 	for _, t := range resp.Threats {
 		s, ok := byID[t.SegmentId]
 		if !ok {
@@ -148,7 +161,23 @@ func (c *Client) Inspect(ctx context.Context, segs []Segment, entityTypes, threa
 			c.fail(err)
 			return nil, nil, err
 		}
+		scored[t.SegmentId+"\x00"+t.Type] = true
 		threats = append(threats, Threat{Segment: s.Index, Type: t.Type, Score: float64(t.Score), Detector: t.Detector})
+	}
+	// An answer is complete: a score for every threat asked for, on every
+	// untrusted segment. A missing score is not a clean segment, it is a
+	// Guard that did not do the work (fail closed).
+	for _, pb := range req.Segments {
+		if !pb.Untrusted {
+			continue
+		}
+		for _, typ := range threatTypes {
+			if !scored[pb.Id+"\x00"+typ] {
+				err := fmt.Errorf("the Guard at %s returned no %s score for segment %s", c.Addr, typ, pb.Id)
+				c.fail(err)
+				return nil, nil, err
+			}
+		}
 	}
 	sort.SliceStable(findings, func(i, j int) bool {
 		if findings[i].Segment != findings[j].Segment {
@@ -157,6 +186,23 @@ func (c *Client) Inspect(ctx context.Context, segs []Segment, entityTypes, threa
 		return findings[i].Start < findings[j].Start
 	})
 	return findings, threats, nil
+}
+
+// Describe says what went wrong in a call to the Guard, for events, logs, and
+// the console. When the Guard itself failed (an exception in its code), the
+// details are left out: the message of an exception could quote the text the
+// Guard was inspecting. Errors of the link and the Guard's own refusals,
+// which name a segment or a limit only, are kept.
+func Describe(err error) string {
+	st, ok := status.FromError(err)
+	if !ok {
+		return err.Error()
+	}
+	switch st.Code() {
+	case codes.Unknown, codes.Internal, codes.DataLoss:
+		return fmt.Sprintf("the Guard failed (%s); its own log says why", st.Code())
+	}
+	return fmt.Sprintf("%s: %s", st.Code(), st.Message())
 }
 
 func byteAt(s string, i int) byte {
@@ -173,6 +219,7 @@ func (c *Client) Info(ctx context.Context) (*guardpb.InfoResponse, error) {
 	defer cancel()
 	info, err := c.api.Info(ctx, &guardpb.InfoRequest{})
 	if err != nil {
+		err = fmt.Errorf("the Guard at %s: %s", c.Addr, Describe(err))
 		c.fail(err)
 		return nil, err
 	}

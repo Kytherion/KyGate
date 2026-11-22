@@ -53,7 +53,7 @@ import (
 )
 
 // Version of this build.
-var Version = "0.1.1"
+var Version = "0.1.2"
 
 // editionTitle is the edition's name for people: Community or Enterprise.
 func editionTitle() string {
@@ -133,8 +133,8 @@ Usage:
   kygate provider region NAME [REGION]  a stored connection's region (no REGION clears it); see data.regions
   kygate provider list | provider remove NAME
   kygate admin-token reset
-  kygate policy check [FILE] [--guard ADDR]
-  kygate policy show --key NAME          the key's effective policy: the organization's merged with its team's, project's, and key's files
+  kygate policy check [FILE] [--guard ADDR] [--strict]   --strict: exit 1 when the Guard does not find a type the policy needs it for
+  kygate policy show --key NAME         the key's effective policy: the organization's merged with its team's, project's, and key's files
   kygate policy enable TYPE... [--action alert|mask|redact|block|local_only] [--require-model] [--yes]
   kygate policy enable PROMPT_INJECTION [--action alert|block|allow] [--yes]
   kygate policy enable --list [--guard ADDR]
@@ -157,6 +157,8 @@ Provider keys from the environment (read at start):
   OPENAI_API_KEY, OPENAI_API_KEY_<SUFFIX>, OPENAI_BASE_URL
   ANTHROPIC_API_KEY, ANTHROPIC_API_KEY_<SUFFIX>, ANTHROPIC_BASE_URL
   KYGATE_LOCAL_<NAME>=<url>, KYGATE_LOCAL_<NAME>_KEY   local OpenAI-compatible model servers
+  KYGATE_REGION_<NAME>                   a connection's region, for data.regions
+  KYGATE_OPENAI_ORG_<NAME>, KYGATE_OPENAI_PROJECT_<NAME>   the OpenAI organization and project a connection bills
 
 Settings from the environment:
   KYGATE_DATA_DIR, KYGATE_LISTEN, KYGATE_CONSOLE_LISTEN, KYGATE_POLICY,
@@ -1253,12 +1255,13 @@ func policyCmd(args []string) error {
 		return policyShow(args[1:])
 	}
 	if len(args) == 0 || args[0] != "check" {
-		return errors.New("usage: kygate policy check [FILE] [--guard ADDR] | policy show --key NAME | policy enable TYPE... [--action alert|mask|...] [--require-model] | policy enable --list")
+		return errors.New("usage: kygate policy check [FILE] [--guard ADDR] [--strict] | policy show --key NAME | policy enable TYPE... [--action alert|mask|...] [--require-model] | policy enable --list")
 	}
 	var c common
 	fs := flag.NewFlagSet("policy", flag.ExitOnError)
 	c.register(fs)
 	guardAddr := fs.String("guard", env("KYGATE_GUARD", ""), "also ask this Guard which level finds each data type")
+	strict := fs.Bool("strict", false, "fail (exit status 1) when the policy needs the Guard and the Guard does not find a type or a threat it names, or when no --guard says which Guard to ask")
 	pos := parse(fs, args[1:])
 	path := c.policyPath()
 	if len(pos) > 0 {
@@ -1297,6 +1300,9 @@ func policyCmd(args []string) error {
 		}
 	} else if len(needs) > 0 {
 		if *guardAddr == "" {
+			if *strict {
+				return fmt.Errorf("the policy needs the Guard for %s; --strict needs --guard ADDR (or KYGATE_GUARD) to check that the Guard finds them", strings.Join(needs, ", "))
+			}
 			fmt.Printf("  note: the policy needs the Guard for %s; add --guard ADDR to see which level finds each type\n", strings.Join(needs, ", "))
 			return nil
 		}
@@ -1313,9 +1319,11 @@ func policyCmd(args []string) error {
 		for _, cv := range st.Coverage {
 			level[cv.EntityType] = cv.Level
 		}
+		var uncovered []string // types and threats whose requests follow on_guard_unavailable
 		for _, t := range needs {
 			if _, isThreat := p.ThreatRuleFor(t); isThreat {
 				if level[t] == "" {
+					uncovered = append(uncovered, t)
 					fmt.Printf("  warning: %s: the Guard at %s has no detector for this threat; requests follow on_guard_unavailable (%s)\n", t, *guardAddr, p.Data.OnGuardUnavailable)
 				} else {
 					fmt.Printf("  ok: %s: detected by a model\n", t)
@@ -1323,15 +1331,20 @@ func policyCmd(args []string) error {
 				continue
 			}
 			switch l := level[t]; {
-			case l == "":
-				fmt.Printf("  warning: %s: the Guard at %s does not find this type; requests follow on_guard_unavailable (%s)\n", t, *guardAddr, p.Data.OnGuardUnavailable)
 			case p.Data.Entities[t].Detection == "model" && l != "model":
-				fmt.Printf("  warning: %s: the policy requires a model and the Guard has only a list; requests follow on_guard_unavailable (%s)\n", t, p.Data.OnGuardUnavailable)
+				uncovered = append(uncovered, t)
+				fmt.Printf("  warning: %s: the policy requires a model and the Guard has none for it; requests follow on_guard_unavailable (%s)\n", t, p.Data.OnGuardUnavailable)
+			case l == "":
+				uncovered = append(uncovered, t)
+				fmt.Printf("  warning: %s: the Guard at %s does not find this type; requests follow on_guard_unavailable (%s)\n", t, *guardAddr, p.Data.OnGuardUnavailable)
 			case l == "list":
 				fmt.Printf("  warning: %s: found by a list only; a value that is not listed is not found. Install a model pack, or set detection: model to refuse instead\n", t)
 			default:
 				fmt.Printf("  ok: %s: found by a model\n", t)
 			}
+		}
+		if *strict && len(uncovered) > 0 {
+			return fmt.Errorf("the Guard at %s does not cover %s, which the policy needs it for", *guardAddr, strings.Join(uncovered, ", "))
 		}
 	}
 	return nil

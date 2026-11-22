@@ -247,7 +247,7 @@ Three points about the order:
 
 This section answers the central question of the original idea: when is it safe to give user B an answer that was produced for user A?
 
-**Exact matches are safe to share across the organization.** A model's answer depends only on the request it receives. To hit an exact entry, B must send the same masked request as A did, so B learns nothing that B could not get by calling the model directly. The default scope is the organization. The one thing B can learn is that someone already asked the same question; a department that minds can narrow its scope to the team or the user.
+**Exact matches are safe to share across the organization.** A model's answer depends only on the request it receives. To hit an exact entry, B must send the same masked request as A did, so B learns nothing that B could not get by calling the model directly. The default scope is the organization. The one thing B can learn is that someone already asked the same question; a department that minds can narrow its scope to the team, the project, or the key (`cache.exact.scope`).
 
 **Look-alike matches need tighter rules.** B only has to send a *similar* prompt, so without controls B could receive an answer that repeats details A typed. A wrong match also returns a wrong answer. The rules are:
 
@@ -501,15 +501,19 @@ Each request runs through ordered stages. The last column says what a stage does
 | 10 | Respond | Inspect output in a sliding window; rehydrate; write the caller's wire format | Remove the part, or stop the stream (per the output action) |
 | 11 | After | Scan the answer and admit it to the cache; settle budget; emit the usage and audit event | Open, except audit (section 4.8) |
 
+Stages 2 and 3 need only the headers, so they run before the body is read: an unknown key, or a request over its limits, costs no read and no parse. The body then has a deadline of its own, because a server-wide read timeout does not suit answers streamed for minutes.
+
 **Native and translated modes.** In *native* mode a request goes to the same API family it arrived in. The gateway rewrites only the fields that carry text and passes every field it does not understand through unchanged. In *translated* mode a request crosses families, for example an Anthropic-style request served by a local OpenAI-compatible model. Translation loses features, so the router considers a translated target only when the model catalog says that target supports every feature the request uses.
 
 ### 4.3 Masking and rehydration
 
 This is the part most likely to go wrong, so its rules are explicit. A *segment* is one piece of text in a request: the system prompt, one message, one tool result.
 
+**Every field that carries text is a segment.** Besides the messages, a request carries text in tool and response-format definitions, a predicted output, stop sequences, identifiers such as `user` and `metadata`, and fields that providers add over time. The parser treats every field as text except a closed list of settings (numbers, flags, choices) and the structural values of schemas (a `type`, a `name`, a `pattern`), so that a new field cannot carry text past the detectors (goal G4); `eval/detection` plants a value in every field of the request shapes the APIs accept and requires each to be found. A segment's ID is its position, with dots and tildes in keys escaped, so that two positions never share an ID. A field whose format cannot hold a placeholder (OpenAI's participant `name`) is scanned, and a value the policy masks in it refuses the request.
+
 **Detection produces findings; the gateway applies them.** A finding is a segment, a data type, start and end offsets, a score, and the detector that produced it. Findings from the fast detectors and from the Guard are merged in one place, with a fixed rule for overlaps. Offsets in the contract are UTF-8 byte offsets, because Python counts characters and Go counts bytes.
 
-**Placeholders.** Each distinct value becomes a typed, numbered placeholder such as `[EMAIL_2]`. The same value always gets the same placeholder within a conversation, so the model can still tell that two mentions refer to the same person. Numbers are assigned in order of first appearance.
+**Placeholders.** Each distinct value becomes a typed, numbered placeholder such as `[EMAIL_2]`. The same value always gets the same placeholder within a conversation, so the model can still tell that two mentions refer to the same person. Numbers are assigned in order of first appearance. Text that the request already holds in the shape of a placeholder of a type the policy masks (a user who types `[EMAIL_1]`, or one left in an earlier answer) is masked too, as `[LITERAL_n]`, and comes back as written: otherwise it would read, to the model and to rehydration, as a value of the request. Which text counts depends only on the policy, so the masking stays the same at every turn.
 
 **Masking is deterministic and append-only.** The same conversation must produce the same masked text every time it is sent, turn by turn:
 
@@ -545,7 +549,7 @@ service Guard {
 }
 
 message Segment {
-  string id = 1;           // position in the request, for example "messages.3.content.0"
+  string id = 1;           // unique in the request: the segment's index, such as "3"
   Role role = 2;           // SYSTEM, USER, ASSISTANT, TOOL_RESULT
   ContentKind kind = 3;    // PROSE, CODE, STRUCTURED
   bool untrusted = 4;      // run threat detectors on this segment
@@ -574,7 +578,8 @@ message InspectResponse { repeated Finding findings = 1; repeated Threat threats
 - **Runtime.** ONNX Runtime with quantized models; CPU by default, GPU optional. Each instance reports ready only after its models are loaded. Batching requests from different callers for a few milliseconds, and warm-up before ready, are planned but not built.
 - **Two levels.** The base Guard finds what its *recognizers* list: terms and patterns from a configuration file. It needs no model and no download, and finds only what is listed. ML detection is the second level, added on purpose: the inference software is an optional extra of the package, and the models come as *model packs* that an operator downloads with an explicit command. Neither KyGate nor the Guard downloads anything on its own.
 - **Models.** A model pack names its models, their size, and their licenses, which the command shows before downloading, and is pinned by digest, which it checks before use. The Guard loads packs from a local model directory, so an air-gapped installation copies the directory and the same checks apply. Every default model must carry a permissive license; which model goes in the default pack is decided by benchmarks.
-- **Which level covers each type.** The Guard reports, for each data type it finds, whether a list or a model covers it. The gateway shows it in the start banner and the console, and `kygate policy check` warns when a type the policy acts on is covered by a list alone. A policy can require a model for a type (`detection: model`): when the Guard has no model for it, the request follows `on_guard_unavailable`. A list never stands in for a model silently, because a list cannot find a name it has never seen.
+- **Which level covers each type.** The Guard reports, for each data type it finds, whether a list or a model covers it. The gateway shows it in the start banner and the console, and `kygate policy check` warns when a type the policy acts on is covered by a list alone. A policy can require a model for a type (`detection: model`): when the Guard has no model for it, the request follows `on_guard_unavailable`. A list never stands in for a model silently, because a list cannot find a name it has never seen. A type that the Guard does not find at all, by a list or a model, follows `on_guard_unavailable` too, as a threat with no detector does: a missing pack or a typo never sends the type unchecked.
+- **A complete answer.** On the wire a segment is named by its index in the request. An answer whose finding does not fit its segment, or that lacks a score for a threat asked for on an untrusted segment, is a Guard failure, not a partial result. When the Guard fails in its own code, its answer and the gateway's records keep the error's code, never its message, which could quote the text.
 - **What is scanned.** Injection detection runs only on untrusted segments: user turns, tool results, retrieved documents. The operator's own system prompt is instructions by design. Prose gets the full ML detectors. Source code and tool output get the fast detectors by default, because secrets are the main risk there and name detection raises many false alarms.
 - **Long inputs.** Sliding windows. The gateway sets a deadline on every call; a missed deadline counts as a Guard failure and follows the fail-closed rule. Because findings are memoized, each turn costs only its new content. A conversation is never rescanned from the start.
 - **Placement.** In a small installation the Guard runs next to the gateway and they talk over a Unix socket, or over TCP on the loopback address, which is the default because it works the same on Windows. In a large one it is a separate autoscaled pool reached over mutually authenticated TLS. A gRPC client keeps one long-lived connection and Kubernetes balances per connection, so the gateway must balance per call itself, with a headless service and client-side balancing or with a service mesh. Otherwise one Guard instance receives all the traffic. *As built:* gRPC round robin over the addresses of a headless service, a one-minute maximum connection age on the Guard so new instances are found, and mutual TLS.
@@ -584,7 +589,7 @@ message InspectResponse { repeated Finding findings = 1; repeated Threat threats
 
 **Fingerprints**
 
-- *Request fingerprint:* HMAC-SHA-256, keyed with a per-organization secret, over a canonical form of the cache scope, the requested model name, the masked system prompt and messages, the tool definitions, every setting that changes the answer, and the cache version. It excludes the streaming flag and request metadata.
+- *Request fingerprint:* HMAC-SHA-256, keyed with a per-organization secret, over a canonical form of the cache scope, the requested model name, the masked system prompt and messages, the tool definitions, every setting that changes the answer, and the cache version. It excludes the streaming flag and request metadata. It includes what is forwarded besides the body and can change the answer: the API version (when not the default), the beta-feature headers, and the query string; a request without them keeps the fingerprint it had before they counted.
 - *Cache version:* a digest of the policy settings that can change a masked request: the mode, the data rules (with dictionary files as loaded), and the exact-cache scope. Events still record the version of the whole policy file.
 - *Context fingerprint:* the same, without the last user message.
 - *Semantic vector:* the embedding of the masked last user message, labeled with the embedding model.
@@ -608,7 +613,7 @@ The hash is keyed so that someone who can read the cache store cannot test guess
 
 **Hints from applications.** Headers let an application skip the cache, narrow the scope, add tags for a later purge, or name the text to compare by meaning. The last one matters for retrieval (RAG) applications, whose final message is mostly retrieved documents: they can pass the user's original question as the text to match.
 
-**Coalescing.** Identical requests that arrive while the first is still running wait for it and share its answer. Followers of a streamed answer first receive what has been produced so far, then follow live. The model call is detached from the first caller's connection, so a disconnect does not fail the others. Coalescing works per gateway instance at first, and across instances later through the shared store.
+**Coalescing.** Identical requests that arrive while the first is still running wait for it and share its answer. Followers of a streamed answer first receive what has been produced so far, then follow live. The model call is detached from the first caller's connection, so a disconnect does not fail the others. Each caller can still leave at any time, even while the provider is silent; the call ends when the last caller leaves before the answer is complete, so a stalled provider never holds request slots for callers who are gone. What one call records is bounded (64 MB, as a plain answer). Coalescing works per gateway instance at first, and across instances later through the shared store.
 
 **The semantic index in Solo.** Entries sit in a table of `cache.db`, grouped by context fingerprint, each sealed like an exact entry: the masked last message, its normalized embedding, and the masked answer. A lookup reads the newest 200 entries of one context and compares them after decryption, so the file holds neither text nor vectors in readable form. Writes happen in the background, and a cleanup keeps at most `cache.semantic.max_entries` (default 20,000) and deletes expired ones. The size limit of the file (`max_disk_mb`) covers both caches. A vector from another embedding model has another length and never matches.
 

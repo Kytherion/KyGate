@@ -4,11 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Kytherion/KyGate/internal/provider"
 )
 
 // Identical requests that arrive together share one model call; each caller
@@ -112,6 +118,67 @@ func TestCoalescingSurvivesTheLeaderLeaving(t *testing.T) {
 	resp, out := h.post("/v1/messages", h.keyA, messages("Explain tides briefly", false))
 	if resp.StatusCode != 200 || resp.Header.Get("X-KyGate-Cache") != "coalesced" || !strings.Contains(out, "You said: Explain tides briefly") || h.up.calls != 1 {
 		t.Fatalf("%d %q calls %d %s", resp.StatusCode, resp.Header.Get("X-KyGate-Cache"), h.up.calls, out)
+	}
+}
+
+// Every caller of a shared call can leave, even while the provider is silent:
+// its slot is freed at once, and when the last one leaves, the call ends.
+func TestCoalescedCallersCanLeave(t *testing.T) {
+	h := newHarness(t, "")
+	release := make(chan struct{})
+	var once sync.Once
+	free := func() { once.Do(func() { close(release) }) }
+	var calls, ended atomic.Int32
+	stall := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintf(w, "event: message_start\ndata: %s\n\n", `{"type":"message_start","message":{"id":"m","type":"message","role":"assistant","model":"claude-opus-5-5","content":[],"usage":{"input_tokens":1,"output_tokens":1}}}`)
+		w.(http.Flusher).Flush()
+		select { // a provider that goes silent
+		case <-release:
+		case <-r.Context().Done():
+			ended.Add(1)
+		}
+	}))
+	t.Cleanup(stall.Close)
+	t.Cleanup(free) // before stall.Close
+	h.g.Registry.Replace([]*provider.Connection{provider.NewConnection("anthropic", provider.Anthropic, stall.URL, "k", "env")})
+	body, _ := json.Marshal(messages("stall please", true))
+	send := func(ctx context.Context) {
+		req, _ := http.NewRequestWithContext(ctx, "POST", h.gw.URL+"/v1/messages", bytes.NewReader(body))
+		req.Header.Set("X-Api-Key", h.keyA)
+		go func() {
+			if resp, err := http.DefaultClient.Do(req); err == nil {
+				io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+			}
+		}()
+	}
+	waitFor := func(what string, cond func() bool) {
+		t.Helper()
+		for i := 0; i < 300 && !cond(); i++ {
+			time.Sleep(10 * time.Millisecond)
+		}
+		if !cond() {
+			t.Fatalf("timed out waiting: %s", what)
+		}
+	}
+	leader, leave1 := context.WithCancel(context.Background())
+	send(leader)
+	waitFor("the leader's call", func() bool { return calls.Load() == 1 })
+	follower, leave2 := context.WithCancel(context.Background())
+	send(follower)
+	waitFor("two callers", func() bool { return h.g.Limit.InFlight() == 2 })
+	leave2()
+	waitFor("the follower to leave", func() bool { return h.g.Limit.InFlight() == 1 })
+	if ended.Load() != 0 {
+		t.Fatal("the call ended while the leader still reads it")
+	}
+	leave1()
+	waitFor("the leader to leave", func() bool { return h.g.Limit.InFlight() == 0 })
+	waitFor("the call to end", func() bool { return ended.Load() == 1 })
+	if calls.Load() != 1 {
+		t.Fatalf("%d calls", calls.Load())
 	}
 }
 

@@ -40,7 +40,7 @@ enum ContentKind {
 }
 
 message Segment {
-  string id = 1;        // position in the request, for example "messages.3.content.0"
+  string id = 1;        // unique in the request: the gateway sends the segment's index, such as "3"
   Role role = 2;
   ContentKind kind = 3;
   bool untrusted = 4;   // run threat detectors on this segment

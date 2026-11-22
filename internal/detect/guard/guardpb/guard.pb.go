@@ -142,7 +142,7 @@ func (ContentKind) EnumDescriptor() ([]byte, []int) {
 
 type Segment struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"` // position in the request, for example "messages.3.content.0"
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"` // unique in the request: the gateway sends the segment's index, such as "3"
 	Role          Role                   `protobuf:"varint,2,opt,name=role,proto3,enum=kygate.guard.v1.Role" json:"role,omitempty"`
 	Kind          ContentKind            `protobuf:"varint,3,opt,name=kind,proto3,enum=kygate.guard.v1.ContentKind" json:"kind,omitempty"`
 	Untrusted     bool                   `protobuf:"varint,4,opt,name=untrusted,proto3" json:"untrusted,omitempty"` // run threat detectors on this segment

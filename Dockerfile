@@ -1,6 +1,6 @@
 # KyGate single binary. The console is embedded; no Node or Python is needed.
 # The Community edition by default. With the Enterprise sources present:
-#   docker build --build-arg TAGS=enterprise -t kygate-ee:0.1.1 .
+#   docker build --build-arg TAGS=enterprise -t kygate-ee:0.1.2 .
 FROM golang:1.26-alpine AS build
 ARG TAGS=""
 WORKDIR /src

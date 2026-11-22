@@ -17,6 +17,29 @@ import (
 // placeholderRe matches the placeholder shape, such as [EMAIL_2] or [DICT_CODENAMES_1].
 var placeholderRe = regexp.MustCompile(`\[[A-Z][A-Z0-9_]*_[0-9]+\]`)
 
+// LiteralType is the placeholder type of text a request already holds in the
+// shape of a placeholder of a type the policy masks, such as "[EMAIL_1]"
+// typed by a user or kept from an earlier answer. Such text is masked like a
+// value, as [LITERAL_n], so it can never be read as, or put back as, a value
+// of this request; the caller gets it back as written.
+const LiteralType = "LITERAL"
+
+// LiteralSpans returns the parts of text that have the shape of a
+// placeholder whose type is in types, as byte offsets.
+func LiteralSpans(text string, types map[string]bool) [][2]int {
+	if len(types) == 0 || !strings.Contains(text, "[") {
+		return nil
+	}
+	var out [][2]int
+	for _, m := range placeholderRe.FindAllStringIndex(text, -1) {
+		p := text[m[0]+1 : m[1]-1] // TYPE_N
+		if types[p[:strings.LastIndexByte(p, '_')]] {
+			out = append(out, [2]int{m[0], m[1]})
+		}
+	}
+	return out
+}
+
 // UnknownPlaceholders counts placeholder-shaped text in answers that matched
 // no value: usually a placeholder the model altered (architecture §4.3).
 var UnknownPlaceholders atomic.Int64

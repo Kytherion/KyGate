@@ -64,12 +64,22 @@ class GuardService(guard_pb2_grpc.GuardServicer):
     def Inspect(self, request, context):
         if not self._ready.is_set():
             context.abort(grpc.StatusCode.UNAVAILABLE, "the Guard is still loading its models")
+        for seg in request.segments:
+            if len(seg.text.encode("utf-8", "surrogatepass")) > MAX_SEGMENT_BYTES:
+                context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"segment {seg.id} is larger than {MAX_SEGMENT_BYTES} bytes")
+        try:
+            return self._inspect(request)
+        except Exception as e:  # noqa: BLE001 - every failure answers the same way
+            # Neither the answer nor the log carries the exception's message,
+            # which could quote the text being inspected: its type only.
+            log.error("inspect failed: %s", type(e).__name__)
+        context.abort(grpc.StatusCode.INTERNAL, "the Guard failed to inspect the request")
+
+    def _inspect(self, request):
         wanted = set(request.entity_types)
         threats = set(request.threat_types)
         resp = guard_pb2.InspectResponse()
         for seg in request.segments:
-            if len(seg.text.encode("utf-8", "surrogatepass")) > MAX_SEGMENT_BYTES:
-                context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"segment {seg.id} is larger than {MAX_SEGMENT_BYTES} bytes")
             # Threats: untrusted segments only (user turns, tool results), any
             # kind of content, because an injection hides in documents and tool
             # output too. Several detectors of one threat: the highest score counts.

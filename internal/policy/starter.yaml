@@ -76,7 +76,7 @@ cache:
 
   exact:
     enabled: true
-    scope: org            # org: shared by every key | key: each virtual key has its own
+    scope: org            # org: shared by every key | team, project: within one | key: each virtual key has its own
     ttl: 30d              # how long a stored answer is served, counted from when it was stored
     max_size_mb: 256      # memory budget of the in-process cache
     # A "regenerate" rule: the same key repeating the same request within this

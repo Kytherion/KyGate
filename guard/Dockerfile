@@ -1,12 +1,12 @@
 # KyGate Guard: the ML service next to the gateway. It detects; the gateway enforces.
 #
-#   docker build -t kygate-guard:0.1.1 guard/                          # recognizers only
-#   docker build -t kygate-guard:0.1.1-ml --build-arg EXTRAS=ml guard/  # with the ML software
+#   docker build -t kygate-guard:0.1.2 guard/                          # recognizers only
+#   docker build -t kygate-guard:0.1.2-ml --build-arg EXTRAS=ml guard/  # with the ML software
 #
 # Model packs are never downloaded by the image or at start. Pull them once,
 # into a volume or a host directory, and mount it on /models:
-#   docker run --rm -v kygate-models:/models kygate-guard:0.1.1-ml models pull            (the default pack)
-#   docker run --rm -v kygate-models:/models kygate-guard:0.1.1-ml models pull personal-data   (an add-on)
+#   docker run --rm -v kygate-models:/models kygate-guard:0.1.2-ml models pull            (the default pack)
+#   docker run --rm -v kygate-models:/models kygate-guard:0.1.2-ml models pull personal-data   (an add-on)
 FROM python:3.12-slim
 ARG EXTRAS=""
 RUN useradd --create-home --uid 10002 guard && mkdir /models && chown guard:guard /models

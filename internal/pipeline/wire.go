@@ -102,14 +102,19 @@ func rehydrate(family ingress.Family, body map[string]any, vm *mask.ValueMap) {
 	if vm == nil || vm.Len() == 0 {
 		return
 	}
+	plain := func(s string) string { return vm.Rehydrate(s, false) }
 	if family == ingress.Anthropic {
 		for _, b := range arr(body["content"]) {
 			bm := obj(b)
 			switch str(bm["type"]) {
 			case "text":
-				bm["text"] = vm.Rehydrate(str(bm["text"]), false)
-			case "tool_use":
-				rehydrateStrings(obj(bm["input"]), vm)
+				bm["text"] = plain(str(bm["text"]))
+			case toolUse, serverToolUse, mcpToolUse:
+				// As in a stream, whose input_json_delta events are put back
+				// for every kind of tool use.
+				if in, ok := bm["input"]; ok {
+					bm["input"] = mapStrings(in, plain)
+				}
 			}
 		}
 		return
@@ -120,38 +125,50 @@ func rehydrate(family ingress.Family, body map[string]any, vm *mask.ValueMap) {
 			continue
 		}
 		if s, ok := msg["content"].(string); ok {
-			msg["content"] = vm.Rehydrate(s, false)
+			msg["content"] = plain(s)
 		}
 		if s, ok := msg["refusal"].(string); ok {
-			msg["refusal"] = vm.Rehydrate(s, false)
+			msg["refusal"] = plain(s)
 		}
 		for _, tc := range arr(msg["tool_calls"]) {
-			fn := obj(obj(tc)["function"])
-			if s, ok := fn["arguments"].(string); ok {
-				fn["arguments"] = vm.Rehydrate(s, true)
+			if fn := obj(obj(tc)["function"]); fn != nil {
+				if s, ok := fn["arguments"].(string); ok {
+					fn["arguments"] = vm.Rehydrate(s, true)
+				}
+			}
+			if cu := obj(obj(tc)["custom"]); cu != nil {
+				if s, ok := cu["input"].(string); ok {
+					cu["input"] = plain(s)
+				}
 			}
 		}
 	}
 }
 
-func rehydrateStrings(m map[string]any, vm *mask.ValueMap) {
-	for k, v := range m {
-		switch t := v.(type) {
-		case string:
-			m[k] = vm.Rehydrate(t, false)
-		case map[string]any:
-			rehydrateStrings(t, vm)
-		case []any:
-			for i, e := range t {
-				switch et := e.(type) {
-				case string:
-					t[i] = vm.Rehydrate(et, false)
-				case map[string]any:
-					rehydrateStrings(et, vm)
-				}
-			}
+// The Anthropic content blocks whose input the model writes.
+const (
+	toolUse       = "tool_use"
+	serverToolUse = "server_tool_use"
+	mcpToolUse    = "mcp_tool_use"
+)
+
+// mapStrings replaces every string inside v, at every depth, lists inside
+// lists included, with f of it. Maps and lists change in place; the result is
+// v, or f(v) for a string.
+func mapStrings(v any, f func(string) string) any {
+	switch t := v.(type) {
+	case string:
+		return f(t)
+	case map[string]any:
+		for k, e := range t {
+			t[k] = mapStrings(e, f)
+		}
+	case []any:
+		for i, e := range t {
+			t[i] = mapStrings(e, f)
 		}
 	}
+	return v
 }
 
 // writeError answers in the caller's wire format.

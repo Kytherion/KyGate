@@ -103,8 +103,12 @@ class OnnxSequenceClassifier(Detector):
 
     def detect_threats(self, text: str, threat_types: set[str]) -> list[tuple[str, float]]:
         wanted = [t for t in self.threat_types if not threat_types or t in threat_types]
-        if not wanted or not text.strip():
+        if not wanted:
             return []
+        if not text.strip():
+            # Nothing to classify, and still an answer: the gateway counts a
+            # missing score as a Guard that did not do its work.
+            return [(t, 0.0) for t in wanted]
         probs = self.scores(text)
         return [(t, float(probs[self._threat_index[t]])) for t in wanted]
 

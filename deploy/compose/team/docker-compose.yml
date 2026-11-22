@@ -15,7 +15,7 @@
 x-kygate: &kygate
   build:
     context: ../../..
-  image: kygate:0.1.1
+  image: kygate:0.1.2
   restart: unless-stopped
   stop_grace_period: 40s   # open streams get 30 seconds to finish
   environment: &env
@@ -118,13 +118,13 @@ services:
       context: ../../../guard
       args:
         EXTRAS: ${KYGATE_GUARD_EXTRAS:-}
-    image: kygate-guard:0.1.1
+    image: kygate-guard:0.1.2
     restart: unless-stopped
     volumes:
       - kygate-models:/models
   guard2:
     profiles: ["guard"]
-    image: kygate-guard:0.1.1
+    image: kygate-guard:0.1.2
     restart: unless-stopped
     volumes:
       - kygate-models:/models

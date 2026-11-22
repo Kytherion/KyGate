@@ -48,13 +48,20 @@ const (
 // Segment is one piece of text in a request: the system prompt, one message,
 // one tool result.
 type Segment struct {
-	ID        string // position, for example "messages.3.content.0"
+	// ID is the position, for example "messages.3.content.0". A key that holds
+	// a dot or a tilde is escaped ("~1", "~0"), so two positions never share
+	// an ID.
+	ID        string
 	Role      string
 	Untrusted bool // user turns and tool results
 	Text      string
 	// JSON is true when Text is itself JSON text, such as tool-call arguments.
 	JSON bool
-	set  func(string)
+	// Fixed is true when the text cannot take a placeholder, such as a
+	// participant name the provider checks against a pattern: a value the
+	// policy masks there refuses the request.
+	Fixed bool
+	set   func(string)
 }
 
 // Set replaces the text of the segment inside the request.
@@ -152,6 +159,111 @@ func (r *Request) add(id, role string, untrusted, isJSON bool, text string, set 
 	r.Segments = append(r.Segments, &Segment{ID: id, Role: role, Untrusted: untrusted, JSON: isJSON, Text: text, set: set})
 }
 
+// Fields that carry no text: numbers, flags, enums, and references to
+// settings. Every other field of a request or a message is scanned, at every
+// depth, so that a field KyGate does not know cannot carry text past the
+// detectors (goal G4).
+var (
+	openAISettings = setOf("model", "messages", "stream", "stream_options", "n", "temperature", "top_p", "max_tokens",
+		"max_completion_tokens", "seed", "logprobs", "top_logprobs", "logit_bias", "presence_penalty", "frequency_penalty",
+		"parallel_tool_calls", "tool_choice", "function_call", "service_tier", "store", "reasoning_effort", "verbosity",
+		"modalities", "audio")
+	openAIMessageFields = setOf("role", "content", "refusal", "tool_calls", "function_call", "name", "tool_call_id", "audio")
+	anthropicSettings   = setOf("model", "messages", "system", "max_tokens", "stream", "temperature", "top_p", "top_k",
+		"tool_choice", "thinking", "service_tier")
+	anthropicMessageFields = setOf("role", "content")
+	// structural keys name, type, or constrain something; their string and
+	// list values are never free text (a JSON schema's "type", "format",
+	// "pattern", and "required"; a tool's "name"). A key of this name whose
+	// value is an object, such as a schema property called "name", is
+	// scanned.
+	structural = setOf("type", "name", "id", "role", "format", "pattern", "$ref", "$schema", "$id", "$anchor",
+		"required", "strict", "tool_use_id", "tool_call_id", "media_type", "cache_control")
+)
+
+func setOf(keys ...string) map[string]bool {
+	m := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		m[k] = true
+	}
+	return m
+}
+
+// idKey escapes a JSON key for a segment ID, the way a JSON pointer does, so
+// {"a":{"b":..}} and {"a.b":..} get different IDs.
+func idKey(k string) string {
+	if !strings.ContainsAny(k, ".~") {
+		return k
+	}
+	return strings.NewReplacer("~", "~0", ".", "~1").Replace(k)
+}
+
+// rest scans the fields of obj that known lists the fields of, or that skip
+// names, as text: every string, at every depth, except the values of
+// structural keys. Keys are visited in sorted order, for stable placeholder
+// numbering (principle 4).
+func (r *Request) rest(obj map[string]any, id string, known map[string]bool, role string, untrusted bool, skip ...string) {
+	extra := setOf(skip...)
+	for _, k := range sortedKeys(obj) {
+		if known[k] {
+			continue
+		}
+		kid := idKey(k)
+		if id != "" {
+			kid = id + "." + kid
+		}
+		r.walkValue(obj, k, kid, role, untrusted, extra)
+	}
+}
+
+// walkValue scans obj[k] as text, skipping structural values.
+func (r *Request) walkValue(obj map[string]any, k, id, role string, untrusted bool, extra map[string]bool) {
+	if extra[k] {
+		return
+	}
+	switch t := obj[k].(type) {
+	case string:
+		if t != "" && !structural[k] {
+			r.add(id, role, untrusted, false, t, func(s string) { obj[k] = s })
+		}
+	case []any:
+		if !structural[k] {
+			r.walkText(t, id, role, untrusted, extra)
+		}
+	case map[string]any:
+		for _, kk := range sortedKeys(t) {
+			r.walkValue(t, kk, id+"."+idKey(kk), role, untrusted, extra)
+		}
+	}
+}
+
+func (r *Request) walkText(list []any, id, role string, untrusted bool, extra map[string]bool) {
+	for i, e := range list {
+		idx, eid := i, id+"."+strconv.Itoa(i)
+		switch t := e.(type) {
+		case string:
+			if t != "" {
+				r.add(eid, role, untrusted, false, t, func(s string) { list[idx] = s })
+			}
+		case []any:
+			r.walkText(t, eid, role, untrusted, extra)
+		case map[string]any:
+			for _, kk := range sortedKeys(t) {
+				r.walkValue(t, kk, eid+"."+idKey(kk), role, untrusted, extra)
+			}
+		}
+	}
+}
+
+func sortedKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func (r *Request) unreadable(kind string) {
 	for _, k := range r.Unreadable {
 		if k == kind {
@@ -213,17 +325,36 @@ func (r *Request) parseOpenAIChat() error {
 		if calls, ok := msg["tool_calls"].([]any); ok {
 			for j, c := range calls {
 				cm, _ := c.(map[string]any)
-				fn, _ := cm["function"].(map[string]any)
-				if fn == nil {
-					continue
+				if fn, _ := cm["function"].(map[string]any); fn != nil {
+					if args, ok := fn["arguments"].(string); ok {
+						r.add(fmt.Sprintf("%s.tool_calls.%d.arguments", base, j), RoleAssistant, false, true, args, func(v string) { fn["arguments"] = v })
+					}
 				}
-				if args, ok := fn["arguments"].(string); ok {
-					r.add(fmt.Sprintf("%s.tool_calls.%d.arguments", base, j), RoleAssistant, false, true, args, func(v string) { fn["arguments"] = v })
+				// A custom tool's input is free text, not JSON.
+				if cu, _ := cm["custom"].(map[string]any); cu != nil {
+					if in, ok := cu["input"].(string); ok && in != "" {
+						r.add(fmt.Sprintf("%s.tool_calls.%d.input", base, j), RoleAssistant, false, false, in, func(v string) { cu["input"] = v })
+					}
 				}
 			}
 		}
-		if (role == "system" || role == "developer" || (role == "user" && !firstUser)) && len(r.Segments) > before {
-			for _, s := range r.Segments[before:] {
+		// The conversation's identity is its content, as before the fields below were scanned.
+		content := r.Segments[before:]
+		// The deprecated form of a tool call carries its arguments the same way.
+		if fc, ok := msg["function_call"].(map[string]any); ok {
+			if args, ok := fc["arguments"].(string); ok {
+				r.add(base+".function_call.arguments", RoleAssistant, false, true, args, func(v string) { fc["arguments"] = v })
+			}
+		}
+		// A participant's name must match ^[a-zA-Z0-9_-]+$, so it cannot take
+		// a placeholder: it is scanned, and a value to mask in it refuses.
+		if n, ok := msg["name"].(string); ok && n != "" {
+			r.add(base+".name", segRole, untrusted, false, n, func(v string) { msg["name"] = v })
+			r.Segments[len(r.Segments)-1].Fixed = true
+		}
+		r.rest(msg, base, openAIMessageFields, segRole, untrusted)
+		if (role == "system" || role == "developer" || (role == "user" && !firstUser)) && len(content) > 0 {
+			for _, s := range content {
 				conv.WriteString("\x00" + s.Text)
 			}
 			if role == "user" {
@@ -231,6 +362,11 @@ func (r *Request) parseOpenAIChat() error {
 			}
 		}
 	}
+	// Every other field that reaches the model: tool and response-format
+	// definitions, a predicted output, stop sequences, identifiers such as
+	// user and metadata, and fields KyGate does not know. After the messages,
+	// so their placeholder numbering does not depend on them.
+	r.rest(r.Body, "", openAISettings, RoleSystem, false)
 	r.Conversation = []byte(conv.String())
 	return nil
 }
@@ -291,6 +427,8 @@ func (r *Request) parseOpenAIEmbeddings() error {
 	default:
 		return badRequest("input must be a string or an array")
 	}
+	// Identifiers such as user, and fields KyGate does not know.
+	r.rest(r.Body, "", setOf("model", "input", "encoding_format", "dimensions"), RoleSystem, false)
 	return nil
 }
 
@@ -367,6 +505,20 @@ func (r *Request) parseAnthropic() error {
 				conv.WriteString("\x00" + s.Text)
 			}
 		}
+		r.rest(msg, "messages."+strconv.Itoa(i), anthropicMessageFields, segRole, untrusted)
+	}
+	// Every other field that reaches the model: tool definitions, stop
+	// sequences, metadata, and fields KyGate does not know. After the
+	// messages, so their placeholder numbering does not depend on them. A
+	// remote MCP server's own credential goes to the provider on purpose, and
+	// is not scanned.
+	known := setOf("mcp_servers")
+	for k := range anthropicSettings {
+		known[k] = true
+	}
+	r.rest(r.Body, "", known, RoleSystem, false)
+	if _, ok := r.Body["mcp_servers"]; ok {
+		r.walkValue(r.Body, "mcp_servers", "mcp_servers", RoleSystem, false, setOf("authorization_token"))
 	}
 	r.Conversation = []byte(conv.String())
 	return nil
@@ -448,40 +600,40 @@ func (r *Request) fileSource(b map[string]any) {
 }
 
 // walkStrings exposes every string value inside a JSON object as a segment,
-// skipping the named keys.
-// Keys are visited in sorted order, so that placeholder numbering is the same
-// every time the same conversation is sent (principle 4).
+// at every depth, lists inside lists included, skipping the named keys of the
+// object itself. Keys are visited in sorted order, so that placeholder
+// numbering is the same every time the same conversation is sent (principle 4).
 func (r *Request) walkStrings(obj map[string]any, id, role string, untrusted bool, skip ...string) {
-	keys := make([]string, 0, len(obj))
-	for k := range obj {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		v := obj[k]
+	for _, k := range sortedKeys(obj) {
 		if contains(skip, k) {
 			continue
 		}
-		key := k
-		switch t := v.(type) {
+		key, kid := k, id+"."+idKey(k)
+		switch t := obj[k].(type) {
 		case string:
 			if t != "" {
-				r.add(id+"."+k, role, untrusted, false, t, func(s string) { obj[key] = s })
+				r.add(kid, role, untrusted, false, t, func(s string) { obj[key] = s })
 			}
 		case map[string]any:
-			r.walkStrings(t, id+"."+k, role, untrusted)
+			r.walkStrings(t, kid, role, untrusted)
 		case []any:
-			for i, e := range t {
-				idx := i
-				switch et := e.(type) {
-				case string:
-					if et != "" {
-						r.add(fmt.Sprintf("%s.%s.%d", id, k, i), role, untrusted, false, et, func(s string) { t[idx] = s })
-					}
-				case map[string]any:
-					r.walkStrings(et, fmt.Sprintf("%s.%s.%d", id, k, i), role, untrusted)
-				}
+			r.walkList(t, kid, role, untrusted)
+		}
+	}
+}
+
+func (r *Request) walkList(list []any, id, role string, untrusted bool) {
+	for i, e := range list {
+		idx, eid := i, id+"."+strconv.Itoa(i)
+		switch t := e.(type) {
+		case string:
+			if t != "" {
+				r.add(eid, role, untrusted, false, t, func(s string) { list[idx] = s })
 			}
+		case map[string]any:
+			r.walkStrings(t, eid, role, untrusted)
+		case []any:
+			r.walkList(t, eid, role, untrusted)
 		}
 	}
 }
